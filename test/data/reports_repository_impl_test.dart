@@ -1,12 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:flutter_citizen_app/src/data/repositories/reports_repository_impl.dart';
-import 'package:flutter_citizen_app/src/data/datasources/api_client.dart';
-import 'package:flutter_citizen_app/src/data/cache/local_cache.dart';
-import 'package:flutter_citizen_app/src/domain/entities/folio_status.dart';
-import 'package:flutter_citizen_app/src/domain/entities/report.dart';
-import 'package:flutter_citizen_app/src/domain/entities/incident_type.dart';
-import 'package:flutter_citizen_app/src/domain/value_objects/auth_token.dart';
+import 'package:citizen_reports_flutter/src/data/repositories/reports_repository_impl.dart';
+import 'package:citizen_reports_flutter/src/data/datasources/api_client.dart';
+import 'package:citizen_reports_flutter/src/data/cache/local_cache.dart';
+import 'package:citizen_reports_flutter/src/domain/entities/folio_status.dart';
+import 'package:citizen_reports_flutter/src/domain/entities/report.dart';
+import 'package:citizen_reports_flutter/src/domain/entities/incident_type.dart';
+import 'package:citizen_reports_flutter/src/domain/value_objects/auth_token.dart';
 
 class _FakeApiClient implements ApiClient {
   _FakeApiClient({this.lookupFolioResponse, this.shouldThrow = false});

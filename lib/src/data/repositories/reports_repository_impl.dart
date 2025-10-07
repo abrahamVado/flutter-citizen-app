@@ -4,64 +4,93 @@ import '../../domain/repositories/reports_repository.dart';
 import '../cache/local_cache.dart';
 import '../datasources/api_client.dart';
 import '../models/mappers.dart';
+import '../../utils/cache/cache_box.dart';
+import '../../utils/cache/concurrency_safe_cache.dart';
+import '../../utils/network/network_executor.dart';
 
 class ReportsRepositoryImpl implements ReportsRepository {
-  ReportsRepositoryImpl({required ApiClient apiClient, required LocalCache cache})
-      : _apiClient = apiClient,
-        _cache = cache;
+  ReportsRepositoryImpl({
+    required ApiClient apiClient,
+    required LocalCache cache,
+  }) : _apiClient = apiClient,
+       _folioHistoryBox = CacheBox<List<Map<String, dynamic>>>(
+         cache: ConcurrencySafeCache(cache),
+         key: _folioHistoryKey,
+         encode: _encodeHistory,
+         decode: _decodeHistory,
+       ),
+       _executor = NetworkExecutor();
 
   final ApiClient _apiClient;
-  final LocalCache _cache;
+  final CacheBox<List<Map<String, dynamic>>> _folioHistoryBox;
+  final NetworkExecutor _executor;
 
   static const _folioHistoryKey = 'folio_history';
+
+  static Map<String, dynamic> _encodeHistory(List<Map<String, dynamic>> items) {
+    //1.- Serializamos la colección completa para mantener el historial en caché.
+    return {'items': items};
+  }
+
+  static List<Map<String, dynamic>> _decodeHistory(Map<String, dynamic> map) {
+    //1.- Convertimos el mapa almacenado en una lista mutable para posteriores mutaciones.
+    return List<Map<String, dynamic>>.from(map['items'] as List<dynamic>);
+  }
+
+  static FolioStatus? _restoreCachedStatus(
+    String folio,
+    List<Map<String, dynamic>> items,
+  ) {
+    //1.- Buscamos si el folio solicitado se encuentra en la colección cacheada.
+    final match = items.firstWhere(
+      (entry) => entry['folio'] == folio,
+      orElse: () => <String, dynamic>{},
+    );
+    if (match.isEmpty) {
+      return null;
+    }
+    //2.- Construimos una respuesta mínima para mostrar al usuario mientras no haya red.
+    return FolioStatus(
+      folio: match['folio'] as String,
+      status: match['status'] as String,
+      lastUpdate: DateTime.parse(match['createdAt'] as String),
+      history: const ['Consulta offline'],
+    );
+  }
 
   @override
   Future<Report> submitReport(ReportRequest request) async {
     //1.- Serializamos la petición y la enviamos al API para generar el folio.
     final map = ReportRequestMapper.toMap(request);
     final report = await _apiClient.submitReport(map);
-    //2.- Actualizamos la caché de historial con el nuevo folio confirmado.
-    final history = await _cache.read(_folioHistoryKey) ?? {'items': <Map<String, dynamic>>[]};
-    final items = List<Map<String, dynamic>>.from(history['items'] as List<dynamic>);
-    items.insert(0, {
-      'folio': report.id,
-      'status': report.status,
-      'createdAt': report.createdAt.toIso8601String(),
+    //2.- Actualizamos la caché de historial utilizando una mutación atómica.
+    await _folioHistoryBox.mutate((current, save, clear) async {
+      final items = List<Map<String, dynamic>>.from(
+        current ?? const <Map<String, dynamic>>[],
+      );
+      items.insert(0, {
+        'folio': report.id,
+        'status': report.status,
+        'createdAt': report.createdAt.toIso8601String(),
+      });
+      save(items);
+      return null;
     });
-    await _cache.write(_folioHistoryKey, {'items': items});
+    //3.- Regresamos el reporte recién confirmado.
     return report;
   }
 
   @override
   Future<FolioStatus> lookupFolio(String folio) async {
-    //1.- Intentamos responder con datos cacheados para mostrar resultados inmediatos.
-    final history = await _cache.read(_folioHistoryKey);
-    FolioStatus? cachedStatus;
-    if (history != null) {
-      final items = List<Map<String, dynamic>>.from(history['items'] as List<dynamic>);
-      final cached = items.cast<Map<String, dynamic>?>().firstWhere(
-            (item) => item?['folio'] == folio,
-            orElse: () => null,
-          );
-      if (cached != null) {
-        //2.- Construimos un FolioStatus parcial en lo que llega la respuesta remota.
-        cachedStatus = FolioStatus(
-          folio: cached['folio'] as String,
-          status: cached['status'] as String,
-          lastUpdate: DateTime.parse(cached['createdAt'] as String),
-          history: const ['Consulta offline'],
-        );
-      }
-    }
-    try {
-      //3.- Consultamos al API para obtener el detalle actualizado.
-      return await _apiClient.lookupFolio(folio);
-    } catch (_) {
-      //4.- Si ocurre un error remoto, recuperamos el estado cacheado como respaldo offline.
-      if (cachedStatus != null) {
-        return cachedStatus;
-      }
-      rethrow;
-    }
+    //1.- Recuperamos el historial cacheado para preparar un posible respaldo offline.
+    final cachedItems = await _folioHistoryBox.read();
+    final cachedStatus = cachedItems == null
+        ? null
+        : _restoreCachedStatus(folio, cachedItems);
+    //2.- Ejecutamos la consulta remota aplicando fallback si existe información local.
+    return _executor.runWithFallback(
+      () => _apiClient.lookupFolio(folio),
+      fallback: cachedStatus == null ? null : (_) => cachedStatus,
+    );
   }
 }
