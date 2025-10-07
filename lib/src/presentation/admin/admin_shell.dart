@@ -10,6 +10,11 @@ import 'state/admin_navigation_controller.dart';
 class AdminShell extends ConsumerWidget {
   const AdminShell({super.key});
 
+  static final _navigatorKey = GlobalKey<NavigatorState>(
+    //1.- Conservamos una única referencia para mantener el historial interno.
+    debugLabel: 'admin-navigator',
+  );
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     //1.- Observamos el estado de navegación para determinar las rutas activas.
@@ -25,6 +30,7 @@ class AdminShell extends ConsumerWidget {
             ListTile(
               leading: const Icon(Icons.list_alt),
               title: const Text('Dashboard'),
+              selected: navigation.route == AdminRoute.dashboard,
               onTap: () {
                 //1.- Cerramos el menú lateral y navegamos a la pantalla principal.
                 Navigator.of(context).pop();
@@ -34,6 +40,8 @@ class AdminShell extends ConsumerWidget {
             ListTile(
               leading: const Icon(Icons.assignment),
               title: const Text('Reportes'),
+              selected: navigation.route == AdminRoute.reportList ||
+                  navigation.route == AdminRoute.reportDetail,
               onTap: () {
                 //1.- Cerramos el menú lateral y navegamos al listado de reportes.
                 Navigator.of(context).pop();
@@ -53,12 +61,17 @@ class AdminShell extends ConsumerWidget {
         ),
       ),
       body: Navigator(
+        key: _navigatorKey,
         //1.- Construimos la pila de páginas en función del estado del controlador.
         pages: [
-          const MaterialPage(child: AdminDashboardScreen()),
+          const MaterialPage(
+            key: ValueKey('admin-dashboard-page'),
+            child: AdminDashboardScreen(),
+          ),
           if (navigation.route == AdminRoute.reportList ||
               navigation.route == AdminRoute.reportDetail)
             MaterialPage(
+              key: const ValueKey('admin-report-list-page'),
               child: ReportListScreen(
                 onReportSelected: navigatorController.openReportDetail,
               ),
@@ -66,6 +79,7 @@ class AdminShell extends ConsumerWidget {
           if (navigation.route == AdminRoute.reportDetail &&
               navigation.selectedReportId != null)
             MaterialPage(
+              key: ValueKey('admin-report-detail-${navigation.selectedReportId}'),
               child: ReportDetailScreen(reportId: navigation.selectedReportId!),
             ),
         ],
