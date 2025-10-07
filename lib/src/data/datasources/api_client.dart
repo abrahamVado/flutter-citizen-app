@@ -8,6 +8,7 @@ import '../../domain/entities/incident_type.dart';
 import '../../domain/entities/paginated_reports.dart';
 import '../../domain/entities/report.dart';
 import '../../domain/value_objects/auth_token.dart';
+import '../../utils/network/network_executor.dart';
 import '../models/mappers.dart';
 
 class ApiClient {
@@ -35,6 +36,7 @@ class ApiClient {
       });
 
   final Dio _dio;
+  final NetworkExecutor _executor;
   final _random = Random();
   final List<Map<String, dynamic>> _adminReports;
 
