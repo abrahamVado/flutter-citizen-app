@@ -1,12 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:flutter_citizen_app/src/data/repositories/reports_repository_impl.dart';
-import 'package:flutter_citizen_app/src/data/datasources/api_client.dart';
-import 'package:flutter_citizen_app/src/data/cache/local_cache.dart';
-import 'package:flutter_citizen_app/src/domain/entities/folio_status.dart';
-import 'package:flutter_citizen_app/src/domain/entities/report.dart';
-import 'package:flutter_citizen_app/src/domain/entities/incident_type.dart';
-import 'package:flutter_citizen_app/src/domain/value_objects/auth_token.dart';
+import 'package:citizen_reports_flutter/src/data/repositories/reports_repository_impl.dart';
+import 'package:citizen_reports_flutter/src/data/datasources/api_client.dart';
+import 'package:citizen_reports_flutter/src/data/cache/local_cache.dart';
+import 'package:citizen_reports_flutter/src/domain/entities/admin_dashboard_metrics.dart';
+import 'package:citizen_reports_flutter/src/domain/entities/folio_status.dart';
+import 'package:citizen_reports_flutter/src/domain/entities/incident_type.dart';
+import 'package:citizen_reports_flutter/src/domain/entities/paginated_reports.dart';
+import 'package:citizen_reports_flutter/src/domain/entities/report.dart';
+import 'package:citizen_reports_flutter/src/domain/value_objects/auth_token.dart';
 
 class _FakeApiClient implements ApiClient {
   _FakeApiClient({this.lookupFolioResponse, this.shouldThrow = false});
@@ -16,12 +18,20 @@ class _FakeApiClient implements ApiClient {
   int lookupCalls = 0;
 
   @override
-  Future<AuthToken> authenticate({required String email, required String password}) {
+  Future<AuthToken> authenticate({
+    required String email,
+    required String password,
+  }) {
     throw UnimplementedError();
   }
 
   @override
   Future<List<IncidentType>> fetchIncidentTypes() {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<AdminDashboardMetrics> fetchAdminDashboardMetrics() {
     throw UnimplementedError();
   }
 
@@ -37,6 +47,32 @@ class _FakeApiClient implements ApiClient {
 
   @override
   Future<Report> submitReport(Map<String, dynamic> payload) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> deleteReport(String id) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Report> fetchReportDetail(String id) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PaginatedReports> fetchReportsPage({
+    required int page,
+    required int pageSize,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Report> updateReportStatus({
+    required String id,
+    required String status,
+  }) {
     throw UnimplementedError();
   }
 }
@@ -87,7 +123,10 @@ void main() {
         history: const ['remote'],
       );
       final apiClient = _FakeApiClient(lookupFolioResponse: expected);
-      final repository = ReportsRepositoryImpl(apiClient: apiClient, cache: cache);
+      final repository = ReportsRepositoryImpl(
+        apiClient: apiClient,
+        cache: cache,
+      );
 
       //2.- Ejecutamos la consulta esperando priorizar el dato remoto actualizado.
       final result = await repository.lookupFolio(folio);
@@ -101,7 +140,10 @@ void main() {
       final cache = _FakeLocalCache();
       await cache.write(folioHistoryKey, cachedMap);
       final apiClient = _FakeApiClient(shouldThrow: true);
-      final repository = ReportsRepositoryImpl(apiClient: apiClient, cache: cache);
+      final repository = ReportsRepositoryImpl(
+        apiClient: apiClient,
+        cache: cache,
+      );
 
       //2.- Al fallar el API debemos recibir el valor cacheado.
       final result = await repository.lookupFolio(folio);
