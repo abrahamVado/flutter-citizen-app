@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:citizen_reports_flutter/src/domain/entities/admin_dashboard_metrics.dart';
 import 'package:citizen_reports_flutter/src/domain/entities/folio_status.dart';
 import 'package:citizen_reports_flutter/src/domain/entities/incident_type.dart';
+import 'package:citizen_reports_flutter/src/domain/entities/paginated_reports.dart';
 import 'package:citizen_reports_flutter/src/domain/entities/report.dart';
 import 'package:citizen_reports_flutter/src/domain/exceptions/validation_exception.dart';
 import 'package:citizen_reports_flutter/src/domain/repositories/reports_repository.dart';
@@ -38,6 +40,36 @@ class _RecordingReportsRepository implements ReportsRepository {
   @override
   Future<FolioStatus> lookupFolio(String folio) {
     //1.- Este caso de uso no consulta folios, por lo que mantenemos la implementación vacía.
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<AdminDashboardMetrics> fetchDashboardMetrics() {
+    //1.- No requerido en estas pruebas unitarias.
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PaginatedReports> fetchReports({required int page, required int pageSize}) {
+    //1.- No requerido en estas pruebas unitarias.
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Report> fetchReportById(String id) {
+    //1.- No requerido en estas pruebas unitarias.
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> deleteReport(String id) {
+    //1.- No requerido en estas pruebas unitarias.
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Report> updateReportStatus({required String id, required String status}) {
+    //1.- No requerido en estas pruebas unitarias.
     throw UnimplementedError();
   }
 }

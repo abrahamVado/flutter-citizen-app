@@ -1,4 +1,6 @@
+import '../../domain/entities/admin_dashboard_metrics.dart';
 import '../../domain/entities/folio_status.dart';
+import '../../domain/entities/paginated_reports.dart';
 import '../../domain/entities/report.dart';
 import '../../domain/repositories/reports_repository.dart';
 import '../cache/local_cache.dart';
@@ -56,6 +58,42 @@ class ReportsRepositoryImpl implements ReportsRepository {
       lastUpdate: DateTime.parse(match['createdAt'] as String),
       history: const ['Consulta offline'],
     );
+  }
+
+  @override
+  Future<AdminDashboardMetrics> fetchDashboardMetrics() {
+    //1.- Delegamos al cliente HTTP para obtener estadísticas globales del panel.
+    return _apiClient.fetchAdminDashboardMetrics();
+  }
+
+  @override
+  Future<PaginatedReports> fetchReports({
+    required int page,
+    required int pageSize,
+  }) {
+    //1.- Pedimos al backend una página específica de reportes administrativos.
+    return _apiClient.fetchReportsPage(page: page, pageSize: pageSize);
+  }
+
+  @override
+  Future<Report> fetchReportById(String id) {
+    //1.- Recuperamos un reporte puntual para mostrar su detalle en el panel.
+    return _apiClient.fetchReportDetail(id);
+  }
+
+  @override
+  Future<Report> updateReportStatus({
+    required String id,
+    required String status,
+  }) {
+    //1.- Propagamos la actualización de estado hacia el backend simulado.
+    return _apiClient.updateReportStatus(id: id, status: status);
+  }
+
+  @override
+  Future<void> deleteReport(String id) {
+    //1.- Solicitamos eliminar el reporte del origen de datos remoto.
+    return _apiClient.deleteReport(id);
   }
 
   @override
