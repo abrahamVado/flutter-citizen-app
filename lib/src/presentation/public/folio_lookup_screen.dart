@@ -15,6 +15,13 @@ class _FolioLookupScreenState extends ConsumerState<FolioLookupScreen> {
   String? _result;
   String? _error;
 
+  @override
+  void dispose() {
+    //1.- Liberamos el controlador del campo de texto antes de destruir el estado.
+    _folioController.dispose();
+    super.dispose();
+  }
+
   Future<void> _lookup() async {
     //1.- Limpiamos mensajes previos antes de realizar una nueva consulta.
     setState(() {
