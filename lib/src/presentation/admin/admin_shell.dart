@@ -3,13 +3,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import 'dashboard/admin_dashboard_screen.dart';
+import 'reports/report_detail_screen.dart';
+import 'reports/report_list_screen.dart';
+import 'state/admin_navigation_controller.dart';
 
 class AdminShell extends ConsumerWidget {
   const AdminShell({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    //1.- Renderizamos una estructura básica con menú lateral para futuras pantallas administrativas.
+    //1.- Observamos el estado de navegación para determinar las rutas activas.
+    final navigation = ref.watch(adminNavigationProvider);
+    final navigatorController = ref.read(adminNavigationProvider.notifier);
+    //2.- Renderizamos la estructura base con navegación anidada para el panel administrativo.
     return Scaffold(
       appBar: AppBar(title: const Text('Panel administrativo')),
       drawer: Drawer(
@@ -19,7 +25,20 @@ class AdminShell extends ConsumerWidget {
             ListTile(
               leading: const Icon(Icons.list_alt),
               title: const Text('Dashboard'),
-              onTap: () => Navigator.of(context).pop(),
+              onTap: () {
+                //1.- Cerramos el menú lateral y navegamos a la pantalla principal.
+                Navigator.of(context).pop();
+                navigatorController.goToDashboard();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.assignment),
+              title: const Text('Reportes'),
+              onTap: () {
+                //1.- Cerramos el menú lateral y navegamos al listado de reportes.
+                Navigator.of(context).pop();
+                navigatorController.goToReportList();
+              },
             ),
             const Spacer(),
             ListTile(
@@ -33,7 +52,31 @@ class AdminShell extends ConsumerWidget {
           ],
         ),
       ),
-      body: const AdminDashboardScreen(),
+      body: Navigator(
+        //1.- Construimos la pila de páginas en función del estado del controlador.
+        pages: [
+          const MaterialPage(child: AdminDashboardScreen()),
+          if (navigation.route == AdminRoute.reportList ||
+              navigation.route == AdminRoute.reportDetail)
+            MaterialPage(
+              child: ReportListScreen(
+                onReportSelected: navigatorController.openReportDetail,
+              ),
+            ),
+          if (navigation.route == AdminRoute.reportDetail &&
+              navigation.selectedReportId != null)
+            MaterialPage(
+              child: ReportDetailScreen(reportId: navigation.selectedReportId!),
+            ),
+        ],
+        onPopPage: (route, result) {
+          //1.- Intentamos cerrar la ruta actual y sincronizamos el estado global.
+          if (!route.didPop(result)) {
+            return false;
+          }
+          return navigatorController.handlePop();
+        },
+      ),
     );
   }
 }
