@@ -36,6 +36,7 @@ class ReportsRepositoryImpl implements ReportsRepository {
   Future<FolioStatus> lookupFolio(String folio) async {
     //1.- Intentamos responder con datos cacheados para mostrar resultados inmediatos.
     final history = await _cache.read(_folioHistoryKey);
+    FolioStatus? cachedStatus;
     if (history != null) {
       final items = List<Map<String, dynamic>>.from(history['items'] as List<dynamic>);
       final cached = items.cast<Map<String, dynamic>?>().firstWhere(
@@ -44,7 +45,7 @@ class ReportsRepositoryImpl implements ReportsRepository {
           );
       if (cached != null) {
         //2.- Construimos un FolioStatus parcial en lo que llega la respuesta remota.
-        return FolioStatus(
+        cachedStatus = FolioStatus(
           folio: cached['folio'] as String,
           status: cached['status'] as String,
           lastUpdate: DateTime.parse(cached['createdAt'] as String),
@@ -52,7 +53,15 @@ class ReportsRepositoryImpl implements ReportsRepository {
         );
       }
     }
-    //3.- Consultamos al API para obtener el detalle actualizado.
-    return _apiClient.lookupFolio(folio);
+    try {
+      //3.- Consultamos al API para obtener el detalle actualizado.
+      return await _apiClient.lookupFolio(folio);
+    } catch (_) {
+      //4.- Si ocurre un error remoto, recuperamos el estado cacheado como respaldo offline.
+      if (cachedStatus != null) {
+        return cachedStatus;
+      }
+      rethrow;
+    }
   }
 }
