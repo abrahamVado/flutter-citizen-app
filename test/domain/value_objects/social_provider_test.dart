@@ -11,6 +11,13 @@ void main() {
       }
     });
 
+    test('should rely on native enum identity for equality', () {
+      //1.- Confirmamos que la igualdad nativa del enum funciona sin necesidad de mezclar EquatableMixin.
+      expect(SocialProvider.google == SocialProvider.google, isTrue);
+      //2.- Validamos que dos proveedores distintos no son iguales para evitar falsos positivos.
+      expect(SocialProvider.google == SocialProvider.apple, isFalse);
+    });
+
     test('should keep expected display name mapping', () {
       //1.- Comprobamos que los nombres visibles se mantienen conforme a la configuración esperada.
       expect(SocialProvider.google.displayName, 'Google');
