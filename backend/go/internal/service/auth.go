@@ -7,17 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 )
 
-// 1.- AuthService administra solicitudes concurrentes y persistencia efímera.
+// 1.- AuthService administra solicitudes concurrentes con persistencia externa.
 type AuthService struct {
 	jobs     chan authJob
 	workers  int
 	tokenTTL time.Duration
-	users    map[string]string
-	mu       sync.RWMutex
+	repo     UserRepository
 }
 
 type authJob struct {
@@ -32,26 +30,36 @@ type authResult struct {
 	err      error
 }
 
-// 2.- AuthResponse modela la respuesta esperada por el cliente Flutter.
+// 2.- UserRepository define las operaciones requeridas para credenciales.
+type UserRepository interface {
+	Create(ctx context.Context, email, passwordHash string) error
+	PasswordHash(ctx context.Context, email string) (string, error)
+	Exists(ctx context.Context, email string) (bool, error)
+}
+
+// 3.- AuthResponse modela la respuesta esperada por el cliente Flutter.
 type AuthResponse struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-// 3.- Declaramos errores reutilizables para mapear códigos HTTP.
+// 4.- Declaramos errores reutilizables para mapear códigos HTTP.
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrEmailConflict      = errors.New("email already registered")
 	ErrUnsupportedLogin   = errors.New("unsupported provider")
 )
 
-// 4.- NewAuthService configura el pool de trabajadores y los registros en memoria.
-func NewAuthService(workers int, tokenTTL time.Duration) *AuthService {
+// 5.- NewAuthService configura el pool de trabajadores y el repositorio.
+func NewAuthService(repo UserRepository, workers int, tokenTTL time.Duration) *AuthService {
+	if repo == nil {
+		panic("user repository is required")
+	}
 	s := &AuthService{
 		jobs:     make(chan authJob),
 		workers:  workers,
 		tokenTTL: tokenTTL,
-		users:    make(map[string]string),
+		repo:     repo,
 	}
 	for i := 0; i < workers; i++ {
 		go s.worker()
@@ -59,7 +67,7 @@ func NewAuthService(workers int, tokenTTL time.Duration) *AuthService {
 	return s
 }
 
-// 5.- Authenticate coloca el trabajo en cola y espera el resultado.
+// 6.- Authenticate coloca el trabajo en cola y espera el resultado.
 func (s *AuthService) Authenticate(ctx context.Context, email, password string) (AuthResponse, error) {
 	resultCh := make(chan authResult, 1)
 	job := authJob{email: email, password: password, ctx: ctx, result: resultCh}
@@ -79,7 +87,7 @@ func (s *AuthService) Authenticate(ctx context.Context, email, password string) 
 	}
 }
 
-// 6.- Register almacena un nuevo usuario y devuelve un token recién emitido.
+// 7.- Register almacena un nuevo usuario y devuelve un token recién emitido.
 func (s *AuthService) Register(ctx context.Context, email, password string) (AuthResponse, error) {
 	select {
 	case <-ctx.Done():
@@ -90,16 +98,13 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (Aut
 	if normalized == "" || strings.TrimSpace(password) == "" {
 		return AuthResponse{}, ErrInvalidCredentials
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, exists := s.users[normalized]; exists {
-		return AuthResponse{}, ErrEmailConflict
+	if err := s.repo.Create(ctx, normalized, s.hashPassword(password)); err != nil {
+		return AuthResponse{}, err
 	}
-	s.users[normalized] = s.hashPassword(password)
 	return s.newToken(normalized), nil
 }
 
-// 7.- Recover valida la existencia de la cuenta para simular el envío de correo.
+// 8.- Recover valida la existencia de la cuenta para simular el envío de correo.
 func (s *AuthService) Recover(ctx context.Context, email string) error {
 	select {
 	case <-ctx.Done():
@@ -110,16 +115,17 @@ func (s *AuthService) Recover(ctx context.Context, email string) error {
 	if normalized == "" {
 		return ErrInvalidCredentials
 	}
-	s.mu.RLock()
-	_, exists := s.users[normalized]
-	s.mu.RUnlock()
+	exists, err := s.repo.Exists(ctx, normalized)
+	if err != nil {
+		return err
+	}
 	if !exists {
 		return ErrInvalidCredentials
 	}
 	return nil
 }
 
-// 8.- SocialAuthenticate genera un token virtual para proveedores federados.
+// 9.- SocialAuthenticate genera un token virtual para proveedores federados.
 func (s *AuthService) SocialAuthenticate(ctx context.Context, provider string) (AuthResponse, error) {
 	select {
 	case <-ctx.Done():
@@ -134,7 +140,7 @@ func (s *AuthService) SocialAuthenticate(ctx context.Context, provider string) (
 	}
 }
 
-// 9.- worker procesa cada autenticación en segundo plano.
+// 10.- worker procesa cada autenticación en segundo plano.
 func (s *AuthService) worker() {
 	for job := range s.jobs {
 		select {
@@ -143,10 +149,12 @@ func (s *AuthService) worker() {
 		default:
 		}
 		normalized := strings.TrimSpace(strings.ToLower(job.email))
-		s.mu.RLock()
-		stored, exists := s.users[normalized]
-		s.mu.RUnlock()
-		if !exists || stored != s.hashPassword(job.password) {
+		stored, err := s.repo.PasswordHash(job.ctx, normalized)
+		if err != nil {
+			job.result <- authResult{err: err}
+			continue
+		}
+		if stored != s.hashPassword(job.password) {
 			job.result <- authResult{err: ErrInvalidCredentials}
 			continue
 		}
@@ -154,7 +162,7 @@ func (s *AuthService) worker() {
 	}
 }
 
-// 10.- newToken centraliza la construcción del token y expiración.
+// 11.- newToken centraliza la construcción del token y expiración.
 func (s *AuthService) newToken(seed string) AuthResponse {
 	hasher := sha1.New()
 	hasher.Write([]byte(fmt.Sprintf("%s:%d", seed, time.Now().UnixNano())))
@@ -164,7 +172,7 @@ func (s *AuthService) newToken(seed string) AuthResponse {
 	}
 }
 
-// 11.- hashPassword asegura que las contraseñas se guarden homogeneizadas.
+// 12.- hashPassword asegura que las contraseñas se guarden homogeneizadas.
 func (s *AuthService) hashPassword(password string) string {
 	hasher := sha1.New()
 	hasher.Write([]byte(password))
