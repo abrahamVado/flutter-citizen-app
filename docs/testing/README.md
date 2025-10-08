@@ -6,7 +6,8 @@ Testing artifacts verify the most critical business flows—report submission va
 ## Key Entry Points
 - [`test/domain/usecases/submit_report_use_case_test.dart`](../../test/domain/usecases/submit_report_use_case_test.dart): Exercises validation and submission logic of the `SubmitReport` use case.
 - [`test/data/reports_repository_impl_test.dart`](../../test/data/reports_repository_impl_test.dart): Covers caching, API fallback, and offline recovery for `ReportsRepositoryImpl`.
-- [`test/widget_test.dart`](../../test/widget_test.dart): Smoke-tests the home screen actions using fake authentication tokens.
+- [`test/widget_test.dart`](../../test/widget_test.dart): Smoke-tests that the citizen shell renders the key public entry points by default.
+- [`test/app/admin_app_test.dart`](../../test/app/admin_app_test.dart): Verifies that the admin shell enforces authentication before exposing private navigation.
 
 ## Major Flows
 ### Report Validation Guarantees
@@ -18,10 +19,11 @@ Testing artifacts verify the most critical business flows—report submission va
 2. When the API throws, the implementation returns cached data to maintain continuity—mirroring the super-commented fallback steps.
 
 ### Widget Entry Points
-1. The widget smoke test bootstraps the app with a known token so `CitizenReportsApp` renders the admin dashboard.
-2. It validates that key public actions remain discoverable through rendered buttons, preserving user journeys described in presentation docs.
+1. The citizen smoke test pumps `CitizenApp` to ensure the public dashboard exposes primary calls-to-action.
+2. The admin widget tests override the session controller to confirm authentication gating and the post-login dashboard transition.
 
 ## Super-Comment Map
 - `test/data/reports_repository_impl_test.dart`: Highlights cache seeding, remote calls, and fallback assertions (`//1.-`–`//2.-`).
 - `test/domain/usecases/submit_report_use_case_test.dart`: Marks payload verification and fake responses (`//1.-`, `//2.-`).
-- `test/widget_test.dart`: Annotates token setup and widget discovery steps (`//1.-`).
+- `test/widget_test.dart`: Anota la verificación de accesos públicos (`//1.-`).
+- `test/app/admin_app_test.dart`: Documenta la inyección de sesión y las aserciones del panel administrativo (`//1.-`, `//2.-`).
