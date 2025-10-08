@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	httpserver "citizenapp/backend/internal/http"
+	httpserver "citizenapp/backend/internal/httpgin"
 	"citizenapp/backend/internal/service"
 )
 
