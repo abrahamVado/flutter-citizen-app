@@ -1,6 +1,4 @@
-import 'package:equatable/equatable.dart';
-
-enum SocialProvider with EquatableMixin {
+enum SocialProvider {
   google('Google'),
   apple('Apple'),
   facebook('Facebook');
@@ -13,7 +11,4 @@ enum SocialProvider with EquatableMixin {
     //1.- Reutilizamos el nombre del enumerado para exponer un identificador estable hacia el backend.
     return name;
   }
-
-  @override
-  List<Object?> get props => [name];
 }
