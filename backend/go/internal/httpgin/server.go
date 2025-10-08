@@ -3,7 +3,9 @@ package httpgin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +33,7 @@ func New(auth *service.AuthService, catalog *service.CatalogService, reports *se
 	engine := gin.New()
 	engine.Use(gin.Logger(), gin.Recovery())
 	engine.NoRoute(func(c *gin.Context) {
-		c.String(http.StatusNotFound, "404 page not found\n")
+		writeError(c, http.StatusNotFound, "not found")
 	})
 	hub := realtime.NewHub(8, 8, 4096, 128)
 	srv := &Server{
@@ -60,37 +62,150 @@ func (s *Server) Engine() *gin.Engine {
 }
 
 func (s *Server) registerRoutes() {
-	// 5.- Reutilizamos withMethod para preservar respuestas 405 personalizadas.
-	s.engine.Any("/auth", withMethod(http.MethodPost, s.handleAuth))
-	s.engine.Any("/catalog", withMethod(http.MethodGet, s.handleCatalog))
-	s.engine.Any("/reports", withMethod(http.MethodPost, s.handleReportSubmit))
-	s.engine.Any("/folios/*id", withMethod(http.MethodGet, s.handleFolioLookup))
-	s.engine.Any("/ws", withMethod(http.MethodGet, s.handleWebSocket))
+	// 5.- Agrupamos las rutas bajo /api/v1 para reflejar el contrato OpenAPI.
+	api := s.engine.Group("/api/v1")
+	s.registerEndpoint(api, "/auth/login", map[string]gin.HandlerFunc{
+		http.MethodPost: s.handleAuthLogin,
+	})
+	s.registerEndpoint(api, "/auth/register", map[string]gin.HandlerFunc{
+		http.MethodPost: s.handleAuthRegister,
+	})
+	s.registerEndpoint(api, "/auth/recover", map[string]gin.HandlerFunc{
+		http.MethodPost: s.handleAuthRecover,
+	})
+	s.registerEndpoint(api, "/auth/social/:provider", map[string]gin.HandlerFunc{
+		http.MethodPost: s.handleAuthSocial,
+	})
+	s.registerEndpoint(api, "/catalog/incident-types", map[string]gin.HandlerFunc{
+		http.MethodGet: s.handleCatalog,
+	})
+	s.registerEndpoint(api, "/reports", map[string]gin.HandlerFunc{
+		http.MethodGet:  s.handleReportList,
+		http.MethodPost: s.handleReportSubmit,
+	})
+	s.registerEndpoint(api, "/reports/:id", map[string]gin.HandlerFunc{
+		http.MethodGet:    s.handleReportGet,
+		http.MethodPatch:  s.handleReportUpdate,
+		http.MethodDelete: s.handleReportDelete,
+	})
+	s.registerEndpoint(api, "/folios/:folio", map[string]gin.HandlerFunc{
+		http.MethodGet: s.handleFolioLookup,
+	})
+	s.registerEndpoint(api, "/admin/dashboard/metrics", map[string]gin.HandlerFunc{
+		http.MethodGet: s.handleAdminMetrics,
+	})
+	s.engine.Handle(http.MethodGet, "/ws", func(c *gin.Context) {
+		if c.Request.Method != http.MethodGet {
+			writeError(c, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleWebSocket(c)
+	})
 }
 
-func (s *Server) handleAuth(c *gin.Context) {
-	// 6.- Ejecutamos la autenticación con límite de tiempo en el pool.
+// 6.- registerEndpoint controla métodos permitidos y devuelve 405 en caso contrario.
+func (s *Server) registerEndpoint(group *gin.RouterGroup, path string, handlers map[string]gin.HandlerFunc) {
+	group.Any(path, func(c *gin.Context) {
+		if handler, ok := handlers[c.Request.Method]; ok {
+			handler(c)
+			return
+		}
+		writeError(c, http.StatusMethodNotAllowed, "method not allowed")
+	})
+}
+
+// 7.- handleAuthLogin verifica credenciales y responde con token JWT simulado.
+func (s *Server) handleAuthLogin(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
-	type credentials struct {
+	var body struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	var body credentials
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := c.ShouldBindJSON(&body); err != nil || body.Email == "" || body.Password == "" {
 		writeError(c, http.StatusBadRequest, "invalid payload")
 		return
 	}
 	resp, err := s.authService.Authenticate(ctx, body.Email, body.Password)
 	if err != nil {
-		writeError(c, http.StatusGatewayTimeout, err.Error())
+		status := http.StatusGatewayTimeout
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			status = http.StatusUnauthorized
+		}
+		writeError(c, status, err.Error())
 		return
 	}
 	writeJSON(c, http.StatusOK, resp)
 }
 
+// 8.- handleAuthRegister crea un usuario y retorna el token inicial.
+func (s *Server) handleAuthRegister(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	resp, err := s.authService.Register(ctx, body.Email, body.Password)
+	if err != nil {
+		status := http.StatusGatewayTimeout
+		switch {
+		case errors.Is(err, service.ErrInvalidCredentials):
+			status = http.StatusBadRequest
+		case errors.Is(err, service.ErrEmailConflict):
+			status = http.StatusConflict
+		}
+		writeError(c, status, err.Error())
+		return
+	}
+	writeJSON(c, http.StatusCreated, resp)
+}
+
+// 9.- handleAuthRecover confirma la existencia y simula el envío de correo.
+func (s *Server) handleAuthRecover(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Email == "" {
+		writeError(c, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	if err := s.authService.Recover(ctx, body.Email); err != nil {
+		status := http.StatusGatewayTimeout
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			status = http.StatusBadRequest
+		}
+		writeError(c, status, err.Error())
+		return
+	}
+	c.Status(http.StatusAccepted)
+}
+
+// 10.- handleAuthSocial valida el proveedor y responde con token federado.
+func (s *Server) handleAuthSocial(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	provider := c.Param("provider")
+	resp, err := s.authService.SocialAuthenticate(ctx, provider)
+	if err != nil {
+		status := http.StatusGatewayTimeout
+		if errors.Is(err, service.ErrUnsupportedLogin) {
+			status = http.StatusBadRequest
+		}
+		writeError(c, status, err.Error())
+		return
+	}
+	writeJSON(c, http.StatusOK, resp)
+}
+
+// 11.- handleCatalog delega al servicio para obtener los tipos de incidentes.
 func (s *Server) handleCatalog(c *gin.Context) {
-	// 7.- Delegamos en el pool del catálogo para respuestas ágiles.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
 	catalog, err := s.catalogService.Fetch(ctx)
@@ -101,8 +216,27 @@ func (s *Server) handleCatalog(c *gin.Context) {
 	writeJSON(c, http.StatusOK, catalog)
 }
 
+// 12.- handleReportList atiende las solicitudes paginadas del panel.
+func (s *Server) handleReportList(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	page := parseQueryInt(c.Query("page"), 0)
+	pageSize := parseQueryInt(c.Query("pageSize"), 20)
+	status := c.Query("status")
+	reports, err := s.reportService.List(ctx, page, pageSize, status)
+	if err != nil {
+		statusCode := http.StatusGatewayTimeout
+		if errors.Is(err, service.ErrInvalidStatus) {
+			statusCode = http.StatusBadRequest
+		}
+		writeError(c, statusCode, err.Error())
+		return
+	}
+	writeJSON(c, http.StatusOK, reports)
+}
+
+// 13.- handleReportSubmit recibe el reporte ciudadano y notifica al hub.
 func (s *Server) handleReportSubmit(c *gin.Context) {
-	// 8.- Encolamos el reporte y notificamos al hub en paralelo.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	var payload map[string]any
@@ -119,24 +253,100 @@ func (s *Server) handleReportSubmit(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, report)
 }
 
-func (s *Server) handleFolioLookup(c *gin.Context) {
-	// 9.- Validamos el folio y lo consultamos en el pool dedicado.
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+// 14.- handleReportGet devuelve el detalle puntual del reporte.
+func (s *Server) handleReportGet(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
-	folioID := strings.TrimPrefix(c.Param("id"), "/")
-	if folioID == "" {
+	id := c.Param("id")
+	report, err := s.reportService.Get(ctx, id)
+	if err != nil {
+		status := http.StatusGatewayTimeout
+		if errors.Is(err, service.ErrReportNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(c, status, err.Error())
+		return
+	}
+	writeJSON(c, http.StatusOK, report)
+}
+
+// 15.- handleReportUpdate permite cambiar el estatus del reporte.
+func (s *Server) handleReportUpdate(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	id := c.Param("id")
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Status) == "" {
+		writeError(c, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	report, err := s.reportService.UpdateStatus(ctx, id, body.Status)
+	if err != nil {
+		status := http.StatusGatewayTimeout
+		switch {
+		case errors.Is(err, service.ErrInvalidStatus):
+			status = http.StatusBadRequest
+		case errors.Is(err, service.ErrReportNotFound):
+			status = http.StatusNotFound
+		}
+		writeError(c, status, err.Error())
+		return
+	}
+	writeJSON(c, http.StatusOK, report)
+}
+
+// 16.- handleReportDelete elimina definitivamente el registro.
+func (s *Server) handleReportDelete(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	id := c.Param("id")
+	if err := s.reportService.Delete(ctx, id); err != nil {
+		status := http.StatusGatewayTimeout
+		if errors.Is(err, service.ErrReportNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(c, status, err.Error())
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// 17.- handleFolioLookup reutiliza el servicio para mostrar el seguimiento.
+func (s *Server) handleFolioLookup(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	folioID := c.Param("folio")
+	if strings.TrimSpace(folioID) == "" {
 		writeError(c, http.StatusBadRequest, "missing folio id")
 		return
 	}
 	status, err := s.reportService.Lookup(ctx, folioID)
 	if err != nil {
-		writeError(c, http.StatusGatewayTimeout, err.Error())
+		statusCode := http.StatusGatewayTimeout
+		if errors.Is(err, service.ErrReportNotFound) {
+			statusCode = http.StatusNotFound
+		}
+		writeError(c, statusCode, err.Error())
 		return
 	}
 	writeJSON(c, http.StatusOK, status)
 }
 
-// 10.- handleWebSocket conserva la actualización en tiempo real.
+// 18.- handleAdminMetrics calcula los totales requeridos por el dashboard.
+func (s *Server) handleAdminMetrics(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+	metrics, err := s.reportService.DashboardMetrics(ctx)
+	if err != nil {
+		writeError(c, http.StatusGatewayTimeout, err.Error())
+		return
+	}
+	writeJSON(c, http.StatusOK, metrics)
+}
+
+// 19.- handleWebSocket conserva la actualización en tiempo real.
 func (s *Server) handleWebSocket(c *gin.Context) {
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -147,12 +357,12 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	go client.Run(context.Background())
 }
 
-// 11.- Shutdown sincroniza el cierre del hub con el servidor HTTP.
+// 20.- Shutdown sincroniza el cierre del hub con el servidor HTTP.
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.realtimeHub.Shutdown(ctx)
 }
 
-// 12.- writeJSON homologa la serialización JSON y cabeceras comunes.
+// 21.- writeJSON homologa la serialización JSON y cabeceras comunes.
 func writeJSON(c *gin.Context, status int, payload any) {
 	c.Header("Content-Type", "application/json")
 	c.Status(status)
@@ -161,19 +371,24 @@ func writeJSON(c *gin.Context, status int, payload any) {
 	_ = encoder.Encode(payload)
 }
 
-// 13.- writeError replica el formato de http.Error con salto de línea.
+// 22.- writeError devuelve el esquema de ErrorResponse definido en OpenAPI.
 func writeError(c *gin.Context, status int, message string) {
-	c.Data(status, "text/plain; charset=utf-8", []byte(message+"\n"))
-	c.Abort()
+	type errorResponse struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	payload := errorResponse{Code: status, Message: message}
+	c.AbortWithStatusJSON(status, payload)
 }
 
-// 14.- withMethod mantiene la validación explícita de métodos HTTP.
-func withMethod(method string, next gin.HandlerFunc) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if c.Request.Method != method {
-			writeError(c, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		next(c)
+// 23.- parseQueryInt estandariza la conversión de parámetros numéricos.
+func parseQueryInt(raw string, fallback int) int {
+	if strings.TrimSpace(raw) == "" {
+		return fallback
 	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return value
 }
