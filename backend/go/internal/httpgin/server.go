@@ -79,11 +79,13 @@ func (s *Server) registerRoutes() {
 	s.registerEndpoint(api, "/catalog/incident-types", map[string]gin.HandlerFunc{
 		http.MethodGet: s.handleCatalog,
 	})
-	s.registerEndpoint(api, "/reports", map[string]gin.HandlerFunc{
+	protected := api.Group("")
+	protected.Use(s.requireAuth())
+	s.registerEndpoint(protected, "/reports", map[string]gin.HandlerFunc{
 		http.MethodGet:  s.handleReportList,
 		http.MethodPost: s.handleReportSubmit,
 	})
-	s.registerEndpoint(api, "/reports/:id", map[string]gin.HandlerFunc{
+	s.registerEndpoint(protected, "/reports/:id", map[string]gin.HandlerFunc{
 		http.MethodGet:    s.handleReportGet,
 		http.MethodPatch:  s.handleReportUpdate,
 		http.MethodDelete: s.handleReportDelete,
@@ -91,7 +93,7 @@ func (s *Server) registerRoutes() {
 	s.registerEndpoint(api, "/folios/:folio", map[string]gin.HandlerFunc{
 		http.MethodGet: s.handleFolioLookup,
 	})
-	s.registerEndpoint(api, "/admin/dashboard/metrics", map[string]gin.HandlerFunc{
+	s.registerEndpoint(protected, "/admin/dashboard/metrics", map[string]gin.HandlerFunc{
 		http.MethodGet: s.handleAdminMetrics,
 	})
 	s.engine.Handle(http.MethodGet, "/ws", func(c *gin.Context) {
@@ -114,7 +116,28 @@ func (s *Server) registerEndpoint(group *gin.RouterGroup, path string, handlers 
 	})
 }
 
-// 7.- handleAuthLogin verifica credenciales y responde con token JWT simulado.
+// 7.- requireAuth valida el encabezado Bearer y aborta si el token no es válido.
+func (s *Server) requireAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		header := c.GetHeader("Authorization")
+		parts := strings.SplitN(header, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			writeError(c, http.StatusUnauthorized, "missing bearer token")
+			c.Abort()
+			return
+		}
+		subject, err := s.authService.ValidateToken(strings.TrimSpace(parts[1]))
+		if err != nil {
+			writeError(c, http.StatusUnauthorized, err.Error())
+			c.Abort()
+			return
+		}
+		c.Set("auth.subject", subject)
+		c.Next()
+	}
+}
+
+// 8.- handleAuthLogin verifica credenciales y responde con token JWT.
 func (s *Server) handleAuthLogin(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -138,7 +161,7 @@ func (s *Server) handleAuthLogin(c *gin.Context) {
 	writeJSON(c, http.StatusOK, resp)
 }
 
-// 8.- handleAuthRegister crea un usuario y retorna el token inicial.
+// 9.- handleAuthRegister crea un usuario y retorna el token inicial.
 func (s *Server) handleAuthRegister(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -165,7 +188,7 @@ func (s *Server) handleAuthRegister(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, resp)
 }
 
-// 9.- handleAuthRecover confirma la existencia y simula el envío de correo.
+// 10.- handleAuthRecover confirma la existencia y simula el envío de correo.
 func (s *Server) handleAuthRecover(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
@@ -187,7 +210,7 @@ func (s *Server) handleAuthRecover(c *gin.Context) {
 	c.Status(http.StatusAccepted)
 }
 
-// 10.- handleAuthSocial valida el proveedor y responde con token federado.
+// 11.- handleAuthSocial valida el proveedor y responde con token federado.
 func (s *Server) handleAuthSocial(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -204,7 +227,7 @@ func (s *Server) handleAuthSocial(c *gin.Context) {
 	writeJSON(c, http.StatusOK, resp)
 }
 
-// 11.- handleCatalog delega al servicio para obtener los tipos de incidentes.
+// 12.- handleCatalog delega al servicio para obtener los tipos de incidentes.
 func (s *Server) handleCatalog(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
@@ -216,7 +239,7 @@ func (s *Server) handleCatalog(c *gin.Context) {
 	writeJSON(c, http.StatusOK, catalog)
 }
 
-// 12.- handleReportList atiende las solicitudes paginadas del panel.
+// 13.- handleReportList atiende las solicitudes paginadas del panel.
 func (s *Server) handleReportList(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -235,7 +258,7 @@ func (s *Server) handleReportList(c *gin.Context) {
 	writeJSON(c, http.StatusOK, reports)
 }
 
-// 13.- handleReportSubmit recibe el reporte ciudadano y notifica al hub.
+// 14.- handleReportSubmit recibe el reporte ciudadano y notifica al hub.
 func (s *Server) handleReportSubmit(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -253,7 +276,7 @@ func (s *Server) handleReportSubmit(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, report)
 }
 
-// 14.- handleReportGet devuelve el detalle puntual del reporte.
+// 15.- handleReportGet devuelve el detalle puntual del reporte.
 func (s *Server) handleReportGet(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -270,7 +293,7 @@ func (s *Server) handleReportGet(c *gin.Context) {
 	writeJSON(c, http.StatusOK, report)
 }
 
-// 15.- handleReportUpdate permite cambiar el estatus del reporte.
+// 16.- handleReportUpdate permite cambiar el estatus del reporte.
 func (s *Server) handleReportUpdate(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -297,7 +320,7 @@ func (s *Server) handleReportUpdate(c *gin.Context) {
 	writeJSON(c, http.StatusOK, report)
 }
 
-// 16.- handleReportDelete elimina definitivamente el registro.
+// 17.- handleReportDelete elimina definitivamente el registro.
 func (s *Server) handleReportDelete(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -313,7 +336,7 @@ func (s *Server) handleReportDelete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// 17.- handleFolioLookup reutiliza el servicio para mostrar el seguimiento.
+// 18.- handleFolioLookup reutiliza el servicio para mostrar el seguimiento.
 func (s *Server) handleFolioLookup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -334,7 +357,7 @@ func (s *Server) handleFolioLookup(c *gin.Context) {
 	writeJSON(c, http.StatusOK, status)
 }
 
-// 18.- handleAdminMetrics calcula los totales requeridos por el dashboard.
+// 19.- handleAdminMetrics calcula los totales requeridos por el dashboard.
 func (s *Server) handleAdminMetrics(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
@@ -346,7 +369,7 @@ func (s *Server) handleAdminMetrics(c *gin.Context) {
 	writeJSON(c, http.StatusOK, metrics)
 }
 
-// 19.- handleWebSocket conserva la actualización en tiempo real.
+// 20.- handleWebSocket conserva la actualización en tiempo real.
 func (s *Server) handleWebSocket(c *gin.Context) {
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -357,12 +380,12 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	go client.Run(context.Background())
 }
 
-// 20.- Shutdown sincroniza el cierre del hub con el servidor HTTP.
+// 21.- Shutdown sincroniza el cierre del hub con el servidor HTTP.
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.realtimeHub.Shutdown(ctx)
 }
 
-// 21.- writeJSON homologa la serialización JSON y cabeceras comunes.
+// 22.- writeJSON homologa la serialización JSON y cabeceras comunes.
 func writeJSON(c *gin.Context, status int, payload any) {
 	c.Header("Content-Type", "application/json")
 	c.Status(status)
@@ -371,7 +394,7 @@ func writeJSON(c *gin.Context, status int, payload any) {
 	_ = encoder.Encode(payload)
 }
 
-// 22.- writeError devuelve el esquema de ErrorResponse definido en OpenAPI.
+// 23.- writeError devuelve el esquema de ErrorResponse definido en OpenAPI.
 func writeError(c *gin.Context, status int, message string) {
 	type errorResponse struct {
 		Code    int    `json:"code"`
@@ -381,7 +404,7 @@ func writeError(c *gin.Context, status int, message string) {
 	c.AbortWithStatusJSON(status, payload)
 }
 
-// 23.- parseQueryInt estandariza la conversión de parámetros numéricos.
+// 24.- parseQueryInt estandariza la conversión de parámetros numéricos.
 func parseQueryInt(raw string, fallback int) int {
 	if strings.TrimSpace(raw) == "" {
 		return fallback

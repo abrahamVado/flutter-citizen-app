@@ -167,7 +167,7 @@ func buildServer(t *testing.T) *Server {
 	gin.SetMode(gin.TestMode)
 	authRepo := newInMemoryUserRepository()
 	reportRepo := newInMemoryReportRepository()
-	authSvc := service.NewAuthService(authRepo, 2, time.Minute)
+	authSvc := service.NewAuthService(authRepo, 2, time.Minute, []byte("integration-secret"))
 	catalogSvc := service.NewCatalogService(1)
 	reportSvc := service.NewReportService(reportRepo, 2, 2)
 	srv := New(authSvc, catalogSvc, reportSvc)
@@ -192,6 +192,7 @@ func TestOpenAPIEndpointsHappyPath(t *testing.T) {
 	if loginResponse.Token == "" {
 		t.Fatalf("expected non-empty token from login")
 	}
+	authHeader := withAuth(loginResponse.Token)
 
 	// 6.- Recuperación de contraseña debe confirmar la cuenta.
 	recoverBody := map[string]string{"email": registerBody["email"]}
@@ -221,7 +222,7 @@ func TestOpenAPIEndpointsHappyPath(t *testing.T) {
 		"address":        "Centro, CDMX",
 	}
 	var created service.Report
-	performJSON(t, srv, http.MethodPost, "/api/v1/reports", reportBody, http.StatusCreated, &created)
+	performJSON(t, srv, http.MethodPost, "/api/v1/reports", reportBody, http.StatusCreated, &created, authHeader)
 	if created.ID == "" {
 		t.Fatalf("expected generated report identifier")
 	}
@@ -242,28 +243,28 @@ func TestOpenAPIEndpointsHappyPath(t *testing.T) {
 
 	// 12.- Listamos los reportes administrativos.
 	var list service.PaginatedReports
-	performRequest(t, srv, http.MethodGet, "/api/v1/reports?page=0&pageSize=10", nil, http.StatusOK, &list)
+	performRequest(t, srv, http.MethodGet, "/api/v1/reports?page=0&pageSize=10", nil, http.StatusOK, &list, authHeader)
 	if len(list.Items) == 0 {
 		t.Fatalf("expected paginated items in list endpoint")
 	}
 
 	// 13.- Leemos el reporte directo y comprobamos el ID.
 	var fetched service.Report
-	performRequest(t, srv, http.MethodGet, "/api/v1/reports/"+created.ID, nil, http.StatusOK, &fetched)
+	performRequest(t, srv, http.MethodGet, "/api/v1/reports/"+created.ID, nil, http.StatusOK, &fetched, authHeader)
 	if fetched.ID != created.ID {
 		t.Fatalf("expected fetched report ID %s, got %s", created.ID, fetched.ID)
 	}
 
 	// 14.- Actualizamos el estatus a resuelto.
 	updateBody := map[string]string{"status": "resuelto"}
-	performJSON(t, srv, http.MethodPatch, "/api/v1/reports/"+created.ID, updateBody, http.StatusOK, &fetched)
+	performJSON(t, srv, http.MethodPatch, "/api/v1/reports/"+created.ID, updateBody, http.StatusOK, &fetched, authHeader)
 	if fetched.Status != "resuelto" {
 		t.Fatalf("expected updated status resuelto, got %s", fetched.Status)
 	}
 
 	// 15.- El dashboard debe reflejar el conteo de resueltos.
 	var metrics service.AdminDashboardMetrics
-	performRequest(t, srv, http.MethodGet, "/api/v1/admin/dashboard/metrics", nil, http.StatusOK, &metrics)
+	performRequest(t, srv, http.MethodGet, "/api/v1/admin/dashboard/metrics", nil, http.StatusOK, &metrics, authHeader)
 	if metrics.ResolvedReports == 0 {
 		t.Fatalf("expected resolved reports metric to be positive")
 	}
@@ -276,8 +277,8 @@ func TestOpenAPIEndpointsHappyPath(t *testing.T) {
 	}
 
 	// 17.- Eliminamos el reporte y comprobamos la ausencia posterior.
-	performRequest(t, srv, http.MethodDelete, "/api/v1/reports/"+created.ID, nil, http.StatusNoContent, nil)
-	performRequest(t, srv, http.MethodGet, "/api/v1/reports/"+created.ID, nil, http.StatusNotFound, nil)
+	performRequest(t, srv, http.MethodDelete, "/api/v1/reports/"+created.ID, nil, http.StatusNoContent, nil, authHeader)
+	performRequest(t, srv, http.MethodGet, "/api/v1/reports/"+created.ID, nil, http.StatusNotFound, nil, authHeader)
 }
 
 func TestMethodEnforcementRemainsActive(t *testing.T) {
@@ -286,18 +287,27 @@ func TestMethodEnforcementRemainsActive(t *testing.T) {
 	performRequest(t, srv, http.MethodGet, "/api/v1/auth/login", nil, http.StatusMethodNotAllowed, nil)
 }
 
-// 19.- performJSON ayuda a serializar cuerpos y decodificar respuestas.
-func performJSON(t *testing.T, srv *Server, method, path string, payload any, expected int, target any) {
+func TestProtectedEndpointsRequireToken(t *testing.T) {
+	// 19.- Las rutas protegidas deben rechazar la ausencia de token.
+	srv := buildServer(t)
+	performRequest(t, srv, http.MethodGet, "/api/v1/reports", nil, http.StatusUnauthorized, nil)
+
+	// 20.- Un token inválido también regresa 401.
+	performRequest(t, srv, http.MethodGet, "/api/v1/reports", nil, http.StatusUnauthorized, nil, withAuth("malformed"))
+}
+
+// 21.- performJSON ayuda a serializar cuerpos y decodificar respuestas.
+func performJSON(t *testing.T, srv *Server, method, path string, payload any, expected int, target any, opts ...func(*http.Request)) {
 	t.Helper()
 	body, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("cannot marshal payload: %v", err)
 	}
-	performWithBody(t, srv, method, path, bytes.NewReader(body), expected, target)
+	performWithBody(t, srv, method, path, bytes.NewReader(body), expected, target, opts...)
 }
 
-// 20.- performRequest ejecuta solicitudes sin cuerpo auxiliar.
-func performRequest(t *testing.T, srv *Server, method, path string, body *bytes.Reader, expected int, target any) {
+// 22.- performRequest ejecuta solicitudes sin cuerpo auxiliar.
+func performRequest(t *testing.T, srv *Server, method, path string, body *bytes.Reader, expected int, target any, opts ...func(*http.Request)) {
 	t.Helper()
 	var reader *bytes.Reader
 	if body != nil {
@@ -305,15 +315,18 @@ func performRequest(t *testing.T, srv *Server, method, path string, body *bytes.
 	} else {
 		reader = bytes.NewReader(nil)
 	}
-	performWithBody(t, srv, method, path, reader, expected, target)
+	performWithBody(t, srv, method, path, reader, expected, target, opts...)
 }
 
-// 21.- performWithBody centraliza la ejecución contra el engine Gin.
-func performWithBody(t *testing.T, srv *Server, method, path string, reader *bytes.Reader, expected int, target any) {
+// 23.- performWithBody centraliza la ejecución contra el engine Gin.
+func performWithBody(t *testing.T, srv *Server, method, path string, reader *bytes.Reader, expected int, target any, opts ...func(*http.Request)) {
 	t.Helper()
 	req := httptest.NewRequest(method, path, reader)
 	if method == http.MethodPost || method == http.MethodPatch {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for _, opt := range opts {
+		opt(req)
 	}
 	rr := httptest.NewRecorder()
 	srv.Engine().ServeHTTP(rr, req)
@@ -327,7 +340,14 @@ func performWithBody(t *testing.T, srv *Server, method, path string, reader *byt
 	}
 }
 
-// 22.- captureConn implementa la interfaz WebSocket mínima para pruebas.
+// 24.- withAuth adjunta el encabezado Authorization requerido por las rutas.
+func withAuth(token string) func(*http.Request) {
+	return func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+token)
+	}
+}
+
+// 25.- captureConn implementa la interfaz WebSocket mínima para pruebas.
 type captureConn struct{}
 
 func (c *captureConn) SetReadLimit(int64)                        {}
