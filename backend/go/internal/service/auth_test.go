@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // 1.- fakeUserRepository simula la persistencia de usuarios para las pruebas.
@@ -48,7 +50,7 @@ func (f *fakeUserRepository) Exists(_ context.Context, email string) (bool, erro
 func TestAuthenticateFlowRequiresRegistration(t *testing.T) {
 	// 2.- Preparamos el servicio y confirmamos que la autenticación falla sin registro previo.
 	repo := newFakeUserRepository()
-	svc := NewAuthService(repo, 1, 2*time.Minute)
+	svc := NewAuthService(repo, 1, 2*time.Minute, []byte("test-secret"))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if _, err := svc.Authenticate(ctx, "user@example.com", "s3cr3t"); !errors.Is(err, ErrInvalidCredentials) {
@@ -80,12 +82,49 @@ func TestAuthenticateFlowRequiresRegistration(t *testing.T) {
 func TestAuthenticateRespectsContextCancellation(t *testing.T) {
 	// 1.- Creamos un contexto cancelado que debe propagarse al servicio.
 	repo := newFakeUserRepository()
-	svc := NewAuthService(repo, 1, time.Minute)
+	svc := NewAuthService(repo, 1, time.Minute, []byte("test-secret"))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	// 2.- Verificamos que el servicio devuelva el error del contexto.
 	if _, err := svc.Authenticate(ctx, "mail", "pwd"); err == nil {
 		t.Fatalf("expected context cancellation error")
+	}
+}
+
+func TestRegisterStoresBCryptHashAndIssuesJWT(t *testing.T) {
+	// 1.- Configuramos el servicio de autenticación con un repositorio falso.
+	repo := newFakeUserRepository()
+	svc := NewAuthService(repo, 1, time.Minute, []byte("jwt-secret"))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// 2.- Ejecutamos el registro y verificamos que no regrese errores.
+	resp, err := svc.Register(ctx, "hash@example.com", "ClaveFuerte1")
+	if err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+	if resp.Token == "" {
+		t.Fatalf("expected jwt token in response")
+	}
+
+	// 3.- Confirmamos que el hash guardado no coincide con el texto plano.
+	repo.mu.RLock()
+	stored := repo.users["hash@example.com"]
+	repo.mu.RUnlock()
+	if stored == "ClaveFuerte1" {
+		t.Fatalf("password stored as plain text")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(stored), []byte("ClaveFuerte1")); err != nil {
+		t.Fatalf("bcrypt comparison failed: %v", err)
+	}
+
+	// 4.- Validamos el JWT y recuperamos el sujeto.
+	subject, err := svc.ValidateToken(resp.Token)
+	if err != nil {
+		t.Fatalf("token validation failed: %v", err)
+	}
+	if subject != "hash@example.com" {
+		t.Fatalf("expected subject hash@example.com, got %s", subject)
 	}
 }

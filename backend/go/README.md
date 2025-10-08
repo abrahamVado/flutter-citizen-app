@@ -15,10 +15,12 @@ go mod tidy
 ## Running the service
 ```bash
 cd backend/go
+export DATABASE_URL="postgres://..."
+export JWT_SECRET="replace-with-long-random-value"
 go run ./cmd/server
 ```
 
-The server listens on `http://127.0.0.1:8080` by default. Configure an alternate port with the `PORT` environment variable before starting the process.
+The server listens on `http://127.0.0.1:8080` by default. Configure an alternate port with the `PORT` environment variable before starting the process. A non-empty `JWT_SECRET` is required to sign and validate access tokens.
 
 ## API surface
 | Endpoint | Method | Description |

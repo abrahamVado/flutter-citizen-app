@@ -32,18 +32,24 @@ func main() {
 		log.Fatalf("cannot reach database: %v", err)
 	}
 
-	// 2.- Inicializamos los servicios concurrentes requeridos por el API.
+	// 2.- Extraemos la clave JWT requerida para firmar tokens.
+	jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
+	}
+
+	// 3.- Inicializamos los servicios concurrentes requeridos por el API.
 	userRepo := repository.NewPostgresUserRepository(db)
 	reportRepo := repository.NewPostgresReportRepository(db)
-	authService := service.NewAuthService(userRepo, 4, 8*time.Hour)
+	authService := service.NewAuthService(userRepo, 4, 8*time.Hour, []byte(jwtSecret))
 	catalogService := service.NewCatalogService(2)
 	reportService := service.NewReportService(reportRepo, 4, 4)
 
-	// 3.- Construimos el enrutador HTTP basado en los servicios previos.
+	// 4.- Construimos el enrutador HTTP basado en los servicios previos.
 	srv := httpserver.New(authService, catalogService, reportService)
 	handler := srv.Router()
 
-	// 4.- Configuramos el servidor tomando el puerto del entorno si existe.
+	// 5.- Configuramos el servidor tomando el puerto del entorno si existe.
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -63,7 +69,7 @@ func main() {
 		}
 	}()
 
-	// 5.- Manejamos la terminación elegante ante señales del sistema.
+	// 6.- Manejamos la terminación elegante ante señales del sistema.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh

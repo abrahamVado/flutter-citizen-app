@@ -2,20 +2,22 @@ package service
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // 1.- AuthService administra solicitudes concurrentes con persistencia externa.
 type AuthService struct {
-	jobs     chan authJob
-	workers  int
-	tokenTTL time.Duration
-	repo     UserRepository
+	jobs      chan authJob
+	workers   int
+	tokenTTL  time.Duration
+	repo      UserRepository
+	jwtSecret []byte
 }
 
 type authJob struct {
@@ -48,18 +50,23 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrEmailConflict      = errors.New("email already registered")
 	ErrUnsupportedLogin   = errors.New("unsupported provider")
+	ErrInvalidToken       = errors.New("invalid token")
 )
 
-// 5.- NewAuthService configura el pool de trabajadores y el repositorio.
-func NewAuthService(repo UserRepository, workers int, tokenTTL time.Duration) *AuthService {
+// 5.- NewAuthService configura el pool de trabajadores y agrega la clave JWT.
+func NewAuthService(repo UserRepository, workers int, tokenTTL time.Duration, jwtSecret []byte) *AuthService {
 	if repo == nil {
 		panic("user repository is required")
 	}
+	if len(jwtSecret) == 0 {
+		panic("jwt secret is required")
+	}
 	s := &AuthService{
-		jobs:     make(chan authJob),
-		workers:  workers,
-		tokenTTL: tokenTTL,
-		repo:     repo,
+		jobs:      make(chan authJob),
+		workers:   workers,
+		tokenTTL:  tokenTTL,
+		repo:      repo,
+		jwtSecret: append([]byte(nil), jwtSecret...),
 	}
 	for i := 0; i < workers; i++ {
 		go s.worker()
@@ -98,10 +105,14 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (Aut
 	if normalized == "" || strings.TrimSpace(password) == "" {
 		return AuthResponse{}, ErrInvalidCredentials
 	}
-	if err := s.repo.Create(ctx, normalized, s.hashPassword(password)); err != nil {
+	hashed, err := s.hashPassword(password)
+	if err != nil {
 		return AuthResponse{}, err
 	}
-	return s.newToken(normalized), nil
+	if err := s.repo.Create(ctx, normalized, hashed); err != nil {
+		return AuthResponse{}, err
+	}
+	return s.newToken(normalized)
 }
 
 // 8.- Recover valida la existencia de la cuenta para simular el envío de correo.
@@ -134,7 +145,7 @@ func (s *AuthService) SocialAuthenticate(ctx context.Context, provider string) (
 	}
 	switch provider {
 	case "google", "apple", "facebook":
-		return s.newToken(provider), nil
+		return s.newToken(provider)
 	default:
 		return AuthResponse{}, ErrUnsupportedLogin
 	}
@@ -154,27 +165,69 @@ func (s *AuthService) worker() {
 			job.result <- authResult{err: err}
 			continue
 		}
-		if stored != s.hashPassword(job.password) {
+		if err := s.verifyPassword(job.password, stored); err != nil {
 			job.result <- authResult{err: ErrInvalidCredentials}
 			continue
 		}
-		job.result <- authResult{response: s.newToken(normalized)}
+		resp, err := s.newToken(normalized)
+		if err != nil {
+			job.result <- authResult{err: err}
+			continue
+		}
+		job.result <- authResult{response: resp}
 	}
 }
 
 // 11.- newToken centraliza la construcción del token y expiración.
-func (s *AuthService) newToken(seed string) AuthResponse {
-	hasher := sha1.New()
-	hasher.Write([]byte(fmt.Sprintf("%s:%d", seed, time.Now().UnixNano())))
-	return AuthResponse{
-		Token:     hex.EncodeToString(hasher.Sum(nil)),
-		ExpiresAt: time.Now().Add(s.tokenTTL),
+func (s *AuthService) newToken(seed string) (AuthResponse, error) {
+	now := time.Now()
+	claims := jwt.RegisteredClaims{
+		Subject:   seed,
+		ExpiresAt: jwt.NewNumericDate(now.Add(s.tokenTTL)),
+		IssuedAt:  jwt.NewNumericDate(now),
 	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString(s.jwtSecret)
+	if err != nil {
+		return AuthResponse{}, fmt.Errorf("sign token: %w", err)
+	}
+	return AuthResponse{
+		Token:     signed,
+		ExpiresAt: claims.ExpiresAt.Time,
+	}, nil
 }
 
 // 12.- hashPassword asegura que las contraseñas se guarden homogeneizadas.
-func (s *AuthService) hashPassword(password string) string {
-	hasher := sha1.New()
-	hasher.Write([]byte(password))
-	return hex.EncodeToString(hasher.Sum(nil))
+func (s *AuthService) hashPassword(password string) (string, error) {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("hash password: %w", err)
+	}
+	return string(hashed), nil
+}
+
+// 13.- verifyPassword compara la contraseña plana contra el hash almacenado.
+func (s *AuthService) verifyPassword(password, hashed string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hashed), []byte(password))
+}
+
+// 14.- ValidateToken analiza y verifica firmas HMAC para las rutas protegidas.
+func (s *AuthService) ValidateToken(token string) (string, error) {
+	parsed, err := jwt.ParseWithClaims(token, &jwt.RegisteredClaims{}, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %s", t.Method.Alg())
+		}
+		return s.jwtSecret, nil
+	}, jwt.WithLeeway(5*time.Second))
+	if err != nil {
+		return "", ErrInvalidToken
+	}
+	claims, ok := parsed.Claims.(*jwt.RegisteredClaims)
+	if !ok || !parsed.Valid {
+		return "", ErrInvalidToken
+	}
+	if claims.ExpiresAt == nil || time.Until(claims.ExpiresAt.Time) < 0 {
+		return "", ErrInvalidToken
+	}
+	return claims.Subject, nil
 }
