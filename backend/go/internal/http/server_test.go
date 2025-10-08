@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ func TestRouterEndpoints(t *testing.T) {
 	catalogSvc := service.NewCatalogService(1)
 	reportSvc := service.NewReportService(1, 1)
 	srv := New(authSvc, catalogSvc, reportSvc)
+	defer srv.Shutdown(context.Background())
+	client := srv.realtimeHub.Register(&captureConn{})
 	handler := srv.Router()
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
@@ -43,7 +46,7 @@ func TestRouterEndpoints(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	// 4.- Enviamos un reporte y revisamos el folio asignado.
+	// 4.- Enviamos un reporte, revisamos el folio y esperamos el broadcast.
 	reportBody, _ := json.Marshal(map[string]any{
 		"incidentTypeId": "pothole",
 		"description":    "Alcantarilla sin tapa",
@@ -64,6 +67,18 @@ func TestRouterEndpoints(t *testing.T) {
 	_ = resp.Body.Close()
 	if submitted.ID == "" {
 		t.Fatalf("expected folio in report response")
+	}
+	select {
+	case message := <-client.Messages():
+		var broadcast map[string]any
+		if err := json.Unmarshal(message, &broadcast); err != nil {
+			t.Fatalf("cannot decode broadcast: %v", err)
+		}
+		if broadcast["type"] != "report.created" {
+			t.Fatalf("unexpected broadcast type: %v", broadcast["type"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected broadcast message for new report")
 	}
 
 	// 5.- Recuperamos el folio mediante el endpoint dedicado.
@@ -90,6 +105,7 @@ func TestRouterTimeoutsPropagate(t *testing.T) {
 	catalogSvc := service.NewCatalogService(1)
 	reportSvc := service.NewReportService(1, 1)
 	srv := New(authSvc, catalogSvc, reportSvc)
+	defer srv.Shutdown(context.Background())
 
 	// 2.- Ejecutamos el handler con un contexto cancelado y verificamos el error.
 	req := httptest.NewRequest(http.MethodPost, "/auth", bytes.NewReader([]byte("{}")))
@@ -101,4 +117,21 @@ func TestRouterTimeoutsPropagate(t *testing.T) {
 	if rr.Code != http.StatusBadRequest && rr.Code != http.StatusGatewayTimeout {
 		t.Fatalf("expected early termination status, got %d", rr.Code)
 	}
+}
+
+// 3.- captureConn simula una conexión de WebSocket sin realizar IO real.
+type captureConn struct {
+	closed atomic.Bool
+}
+
+func (c *captureConn) SetReadLimit(int64)                        {}
+func (c *captureConn) SetReadDeadline(time.Time) error           { return nil }
+func (c *captureConn) SetWriteDeadline(time.Time) error          { return nil }
+func (c *captureConn) SetPongHandler(func(string) error)         {}
+func (c *captureConn) ReadMessage() (int, []byte, error)         { return 0, nil, context.Canceled }
+func (c *captureConn) WriteMessage(int, []byte) error            { return nil }
+func (c *captureConn) WriteControl(int, []byte, time.Time) error { return nil }
+func (c *captureConn) Close() error {
+	c.closed.Store(true)
+	return nil
 }

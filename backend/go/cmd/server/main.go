@@ -53,4 +53,7 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		log.Printf("shutdown error: %v", err)
 	}
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("realtime shutdown error: %v", err)
+	}
 }
