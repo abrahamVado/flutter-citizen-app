@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -68,17 +67,27 @@ type AdminDashboardMetrics struct {
 	CriticalIncidents int `json:"criticalIncidents"`
 }
 
-// 5.- ReportService orquesta los pools de envío y consulta.
+// 5.- ReportRepository define el contrato de persistencia para reportes.
+type ReportRepository interface {
+	Create(ctx context.Context, report Report) (Report, error)
+	FindByID(ctx context.Context, id string) (Report, error)
+	List(ctx context.Context, page, pageSize int, status string) ([]Report, int, error)
+	Delete(ctx context.Context, id string) error
+	Lookup(ctx context.Context, id string) (FolioStatus, error)
+	UpdateStatusWithMetrics(ctx context.Context, id, status string) (Report, AdminDashboardMetrics, error)
+	Metrics(ctx context.Context) (AdminDashboardMetrics, error)
+}
+
+// 6.- ReportService orquesta los pools de envío y consulta.
 type ReportService struct {
 	submitJobs chan submitJob
 	lookupJobs chan lookupJob
-	mutex      sync.RWMutex
-	records    map[string]Report
+	repo       ReportRepository
 	rand       *rand.Rand
 	randMutex  sync.Mutex
 }
 
-// 6.- Errores compartidos para mapear estados HTTP coherentes.
+// 7.- Errores compartidos para mapear estados HTTP coherentes.
 var (
 	ErrReportNotFound = errors.New("report not found")
 	ErrInvalidStatus  = errors.New("invalid status")
@@ -91,12 +100,15 @@ var allowedStatuses = map[string]struct{}{
 	"critico":     {},
 }
 
-// 7.- NewReportService inicializa los trabajadores concurrentes.
-func NewReportService(submitWorkers, lookupWorkers int) *ReportService {
+// 8.- NewReportService inicializa los trabajadores concurrentes.
+func NewReportService(repo ReportRepository, submitWorkers, lookupWorkers int) *ReportService {
+	if repo == nil {
+		panic("report repository is required")
+	}
 	s := &ReportService{
 		submitJobs: make(chan submitJob),
 		lookupJobs: make(chan lookupJob),
-		records:    make(map[string]Report),
+		repo:       repo,
 		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	for i := 0; i < submitWorkers; i++ {
@@ -108,7 +120,7 @@ func NewReportService(submitWorkers, lookupWorkers int) *ReportService {
 	return s
 }
 
-// 8.- Submit genera un folio y almacena el reporte en memoria.
+// 9.- Submit genera un folio y almacena el reporte en el repositorio.
 func (s *ReportService) Submit(ctx context.Context, payload map[string]any) (Report, error) {
 	resultCh := make(chan submitResult, 1)
 	job := submitJob{ctx: ctx, payload: payload, resultCh: resultCh}
@@ -128,7 +140,7 @@ func (s *ReportService) Submit(ctx context.Context, payload map[string]any) (Rep
 	}
 }
 
-// 9.- Lookup consulta el almacenamiento concurrente y devuelve el historial.
+// 10.- Lookup consulta el almacenamiento persistente y devuelve el historial.
 func (s *ReportService) Lookup(ctx context.Context, folio string) (FolioStatus, error) {
 	resultCh := make(chan lookupResult, 1)
 	job := lookupJob{ctx: ctx, folio: folio, resultCh: resultCh}
@@ -148,7 +160,7 @@ func (s *ReportService) Lookup(ctx context.Context, folio string) (FolioStatus, 
 	}
 }
 
-// 10.- List aplica paginación en memoria con filtros opcionales.
+// 11.- List delega la paginación al repositorio con filtros opcionales.
 func (s *ReportService) List(ctx context.Context, page, pageSize int, status string) (PaginatedReports, error) {
 	select {
 	case <-ctx.Done():
@@ -161,49 +173,29 @@ func (s *ReportService) List(ctx context.Context, page, pageSize int, status str
 			return PaginatedReports{}, ErrInvalidStatus
 		}
 	}
-	s.mutex.RLock()
-	items := make([]Report, 0, len(s.records))
-	for _, report := range s.records {
-		if trimmed != "" && report.Status != trimmed {
-			continue
-		}
-		items = append(items, report)
+	items, total, err := s.repo.List(ctx, page, pageSize, trimmed)
+	if err != nil {
+		return PaginatedReports{}, err
 	}
-	s.mutex.RUnlock()
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].CreatedAt.After(items[j].CreatedAt)
-	})
-	total := len(items)
-	start := page * pageSize
-	if start > total {
-		start = total
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-	paginated := items[start:end]
-	hasMore := end < total
-	return PaginatedReports{Items: paginated, HasMore: hasMore, Page: page, TotalCount: total}, nil
+	hasMore := (page+1)*pageSize < total
+	return PaginatedReports{Items: items, HasMore: hasMore, Page: page, TotalCount: total}, nil
 }
 
-// 11.- Get obtiene un reporte puntual por identificador.
+// 12.- Get obtiene un reporte puntual por identificador.
 func (s *ReportService) Get(ctx context.Context, id string) (Report, error) {
 	select {
 	case <-ctx.Done():
 		return Report{}, ctx.Err()
 	default:
 	}
-	s.mutex.RLock()
-	report, exists := s.records[id]
-	s.mutex.RUnlock()
-	if !exists {
-		return Report{}, ErrReportNotFound
+	report, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return Report{}, err
 	}
 	return report, nil
 }
 
-// 12.- UpdateStatus valida y actualiza el estatus de un reporte.
+// 13.- UpdateStatus valida y actualiza el estatus de un reporte.
 func (s *ReportService) UpdateStatus(ctx context.Context, id, status string) (Report, error) {
 	select {
 	case <-ctx.Done():
@@ -214,54 +206,31 @@ func (s *ReportService) UpdateStatus(ctx context.Context, id, status string) (Re
 	if _, ok := allowedStatuses[trimmed]; !ok {
 		return Report{}, ErrInvalidStatus
 	}
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	report, exists := s.records[id]
-	if !exists {
-		return Report{}, ErrReportNotFound
+	report, _, err := s.repo.UpdateStatusWithMetrics(ctx, id, trimmed)
+	if err != nil {
+		return Report{}, err
 	}
-	report.Status = trimmed
-	s.records[id] = report
 	return report, nil
 }
 
-// 13.- Delete elimina un reporte del almacenamiento en memoria.
+// 14.- Delete elimina un reporte del almacenamiento persistente.
 func (s *ReportService) Delete(ctx context.Context, id string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if _, exists := s.records[id]; !exists {
-		return ErrReportNotFound
-	}
-	delete(s.records, id)
-	return nil
+	return s.repo.Delete(ctx, id)
 }
 
-// 14.- DashboardMetrics consolida los totales para el panel de control.
+// 15.- DashboardMetrics consolida los totales para el panel de control.
 func (s *ReportService) DashboardMetrics(ctx context.Context) (AdminDashboardMetrics, error) {
 	select {
 	case <-ctx.Done():
 		return AdminDashboardMetrics{}, ctx.Err()
 	default:
 	}
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-	metrics := AdminDashboardMetrics{}
-	for _, report := range s.records {
-		switch report.Status {
-		case "en_revision":
-			metrics.PendingReports++
-		case "resuelto":
-			metrics.ResolvedReports++
-		case "critico":
-			metrics.CriticalIncidents++
-		}
-	}
-	return metrics, nil
+	return s.repo.Metrics(ctx)
 }
 
 func (s *ReportService) submitWorker() {
@@ -294,10 +263,12 @@ func (s *ReportService) submitWorker() {
 			Status:      "en_revision",
 			CreatedAt:   time.Now(),
 		}
-		s.mutex.Lock()
-		s.records[id] = report
-		s.mutex.Unlock()
-		job.resultCh <- submitResult{report: report}
+		stored, err := s.repo.Create(job.ctx, report)
+		if err != nil {
+			job.resultCh <- submitResult{err: err}
+			continue
+		}
+		job.resultCh <- submitResult{report: stored}
 	}
 }
 
@@ -308,27 +279,16 @@ func (s *ReportService) lookupWorker() {
 			continue
 		default:
 		}
-		s.mutex.RLock()
-		report, ok := s.records[job.folio]
-		s.mutex.RUnlock()
-		if !ok {
-			job.resultCh <- lookupResult{err: ErrReportNotFound}
+		status, err := s.repo.Lookup(job.ctx, job.folio)
+		if err != nil {
+			job.resultCh <- lookupResult{err: err}
 			continue
-		}
-		status := FolioStatus{
-			Folio:      report.ID,
-			Status:     report.Status,
-			LastUpdate: time.Now(),
-			History: []string{
-				"Reporte recibido",
-				"Asignado a cuadrilla",
-			},
 		}
 		job.resultCh <- lookupResult{status: status}
 	}
 }
 
-// 15.- toFloat homogeniza los datos numéricos recibidos.
+// 16.- toFloat homogeniza los datos numéricos recibidos.
 func toFloat(value any) (float64, bool) {
 	switch v := value.(type) {
 	case float64:
