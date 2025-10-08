@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+import '../../design/shadcn/components/shadcn_card.dart';
+
 class AdminPrivateMapScreen extends StatelessWidget {
   const AdminPrivateMapScreen({
     super.key,
@@ -42,15 +44,10 @@ class AdminPrivateMapScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.outlineVariant,
-                    ),
-                    borderRadius: BorderRadius.circular(24),
-                  ),
+              child: ShadcnCard(
+                padding: EdgeInsets.zero,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
                   child: _mapBuilder(context),
                 ),
               ),

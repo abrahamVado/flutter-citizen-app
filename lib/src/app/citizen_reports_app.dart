@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../presentation/admin/admin_shell.dart';
+import '../presentation/design/shadcn/shadcn_theme.dart';
 import '../presentation/public/public_shell.dart';
 import 'providers.dart';
 import 'state/session_controller.dart';
@@ -13,10 +14,7 @@ class CitizenReportsApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     //1.- Observamos el estado de sesión para decidir qué grafo de navegación mostrar.
     final session = ref.watch(sessionControllerProvider);
-    final theme = ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0066CC)),
-      useMaterial3: true,
-    );
+    final theme = ShadcnTheme.build();
     return MaterialApp(
       title: 'Citizen Reports',
       theme: theme,

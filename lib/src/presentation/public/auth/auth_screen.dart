@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../app/providers.dart';
 import '../../../app/state/session_controller.dart';
 import '../../../domain/entities/auth_credentials.dart';
 import '../../../domain/value_objects/social_provider.dart';
-import '../../widgets/primary_button.dart';
-import '../../../app/providers.dart';
+import '../../design/shadcn/components/shadcn_button.dart';
+import '../../design/shadcn/components/shadcn_card.dart';
+import '../../design/shadcn/components/shadcn_input.dart';
+import '../../design/shadcn/components/shadcn_page.dart';
 import 'recover_password_controller.dart';
 import 'recover_password_state.dart';
 import 'registration_controller.dart';
@@ -30,11 +33,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   }
 
   Widget _buildSection({required String title, required List<Widget> children}) {
-    //1.- Agrupamos cada flujo en una tarjeta consistente para mejorar la lectura.
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    //1.- Envolvemos cada bloque funcional en una tarjeta estilizada acorde a shadcn/ui.
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: ShadcnCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -60,27 +62,26 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
 
     final signInLoading = sessionState.status == SessionStatus.initializing;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Acceso administrativo')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildSection(
+    return ShadcnPage(
+      title: 'Acceso administrativo',
+      scrollable: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSection(
               title: 'Iniciar sesión',
               children: [
-                TextField(
+                ShadcnInput(
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Correo electrónico'),
+                  label: 'Correo electrónico',
                   onChanged: (value) {
                     //1.- Guardamos el correo para construir las credenciales al enviar.
                     setState(() => _signInEmail = value);
                   },
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  decoration: const InputDecoration(labelText: 'Contraseña'),
+                ShadcnInput(
+                  label: 'Contraseña',
                   obscureText: true,
                   onChanged: (value) {
                     //1.- Persistimos la contraseña en el estado local del widget.
@@ -88,9 +89,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   },
                 ),
                 const SizedBox(height: 16),
-                PrimaryButton(
+                ShadcnButton(
                   label: signInLoading ? 'Ingresando…' : 'Ingresar',
-                  onPressed: signInLoading ? null : () => _submitSignIn(sessionController),
+                  onPressed:
+                      signInLoading ? null : () => _submitSignIn(sessionController),
                 ),
                 if (sessionState.status == SessionStatus.error &&
                     sessionState.errorMessage != null)
@@ -103,27 +105,28 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   ),
               ],
             ),
-            _buildSection(
+          _buildSection(
               title: 'Crear cuenta',
               children: [
-                TextFormField(
+                ShadcnInput(
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Correo electrónico'),
+                  label: 'Correo electrónico',
                   initialValue: registrationState.email,
                   onChanged: registrationController.updateEmail,
                 ),
                 const SizedBox(height: 12),
-                TextFormField(
-                  decoration: const InputDecoration(labelText: 'Contraseña'),
+                ShadcnInput(
+                  label: 'Contraseña',
                   obscureText: true,
                   initialValue: registrationState.password,
                   onChanged: registrationController.updatePassword,
                 ),
                 const SizedBox(height: 16),
-                PrimaryButton(
+                ShadcnButton(
                   label: registrationState.isLoading ? 'Registrando…' : 'Registrarse',
-                  onPressed:
-                      registrationState.isLoading ? null : () => registrationController.submit(),
+                  onPressed: registrationState.isLoading
+                      ? null
+                      : () => registrationController.submit(),
                 ),
                 if (registrationState.status == RegistrationStatus.success)
                   const Padding(
@@ -141,19 +144,20 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   ),
               ],
             ),
-            _buildSection(
+          _buildSection(
               title: 'Recuperar contraseña',
               children: [
-                TextFormField(
+                ShadcnInput(
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Correo electrónico'),
+                  label: 'Correo electrónico',
                   initialValue: recoverState.email,
                   onChanged: recoverController.updateEmail,
                 ),
                 const SizedBox(height: 16),
-                PrimaryButton(
+                ShadcnButton(
                   label: recoverState.isLoading ? 'Enviando…' : 'Enviar instrucciones',
-                  onPressed: recoverState.isLoading ? null : () => recoverController.submit(),
+                  onPressed:
+                      recoverState.isLoading ? null : () => recoverController.submit(),
                 ),
                 if (recoverState.status == RecoverPasswordStatus.success)
                   const Padding(
@@ -171,15 +175,15 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   ),
               ],
             ),
-            _buildSection(
+          _buildSection(
               title: 'Acceder con redes sociales',
               children: [
                 Wrap(
                   spacing: 12,
                   runSpacing: 12,
                   children: SocialProvider.values.map((provider) {
-                    return PrimaryButton(
-                      expands: false,
+                    return ShadcnButton(
+                      expand: false,
                       label: provider.displayName,
                       onPressed: socialState.isLoading
                           ? null
@@ -211,8 +215,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   ),
               ],
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

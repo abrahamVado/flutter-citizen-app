@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
+import '../design/shadcn/components/shadcn_button.dart';
+import '../design/shadcn/components/shadcn_card.dart';
+import '../design/shadcn/components/shadcn_input.dart';
+import '../design/shadcn/components/shadcn_page.dart';
 
 class FolioLookupScreen extends ConsumerStatefulWidget {
   const FolioLookupScreen({super.key});
@@ -46,33 +50,57 @@ class _FolioLookupScreenState extends ConsumerState<FolioLookupScreen> {
   @override
   Widget build(BuildContext context) {
     //1.- Renderizamos el formulario de consulta junto con los resultados.
-    return Scaffold(
-      appBar: AppBar(title: const Text('Consulta de folio')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Ingresa el folio entregado en tu reporte anterior.'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _folioController,
-              decoration: const InputDecoration(labelText: 'Folio', border: OutlineInputBorder()),
+    return ShadcnPage(
+      title: 'Consulta de folio',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Ingresa el folio entregado en tu reporte anterior.'),
+          const SizedBox(height: 16),
+          ShadcnCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ShadcnInput(
+                  controller: _folioController,
+                  label: 'Folio',
+                  hintText: 'Ej. CR-2048',
+                ),
+                const SizedBox(height: 16),
+                ShadcnButton(
+                  label: 'Buscar',
+                  onPressed: _lookup,
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _lookup,
-              child: const Text('Buscar'),
-            ),
-            const SizedBox(height: 24),
-            if (_result != null) Text(_result!),
-            if (_error != null)
-              Text(
-                _error!,
-                style: const TextStyle(color: Colors.red),
+          ),
+          const SizedBox(height: 24),
+          if (_result != null)
+            ShadcnCard(
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_outline, color: Colors.green),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(_result!)),
+                ],
               ),
-          ],
-        ),
+            ),
+          if (_error != null)
+            ShadcnCard(
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.redAccent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
