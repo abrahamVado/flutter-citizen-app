@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../widgets/primary_button.dart';
+import '../../design/shadcn/components/shadcn_button.dart';
+import '../../design/shadcn/components/shadcn_card.dart';
 import '../state/admin_reports_providers.dart';
 
 class ReportListScreen extends ConsumerWidget {
@@ -29,20 +30,23 @@ class ReportListScreen extends ConsumerWidget {
       items.add(
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Row(
-            children: [
-              const Icon(Icons.error_outline),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'No fue posible cargar los reportes: ${state.error}',
+          child: ShadcnCard(
+            child: Row(
+              children: [
+                Icon(Icons.error_outline,
+                    color: Theme.of(context).colorScheme.error),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'No fue posible cargar los reportes: ${state.error}',
+                  ),
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: () => controller.loadInitial(),
-              ),
-            ],
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () => controller.loadInitial(),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -59,19 +63,28 @@ class ReportListScreen extends ConsumerWidget {
     } else {
       for (final report in state.items) {
         items.add(
-          Card(
-            child: ListTile(
-              title: Text('Folio ${report.id}'),
-              subtitle: Text(
-                'Estado: ${report.status}\nCreado: ${report.createdAt.toLocal()}'
-                    .split('.')
-                    .first,
-              ),
-              trailing: PrimaryButton(
-                label: 'Ver detalle',
-                expands: false,
-                onPressed: () => onReportSelected(report.id),
-              ),
+          ShadcnCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Folio ${report.id}',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                Text(
+                  'Estado: ${report.status}\nCreado: ${report.createdAt.toLocal()}'
+                      .split('.')
+                      .first,
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: ShadcnButton(
+                    label: 'Ver detalle',
+                    expand: false,
+                    onPressed: () => onReportSelected(report.id),
+                  ),
+                ),
+              ],
             ),
           ),
         );
@@ -88,7 +101,7 @@ class ReportListScreen extends ConsumerWidget {
       items.add(
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
-          child: PrimaryButton(
+          child: ShadcnButton(
             label: 'Cargar más',
             onPressed: () => controller.loadMore(),
           ),

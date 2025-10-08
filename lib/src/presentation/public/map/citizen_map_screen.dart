@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+import '../../design/shadcn/components/shadcn_button.dart';
+import '../../design/shadcn/components/shadcn_page.dart';
 import '../report/report_form_sheet.dart';
 
 class CitizenMapScreen extends StatefulWidget {
@@ -53,15 +55,16 @@ class _CitizenMapScreenState extends State<CitizenMapScreen> {
   @override
   Widget build(BuildContext context) {
     //4.- Renderizamos el mapa de Google y el botón de confirmación de la ubicación.
-    return Scaffold(
-      appBar: AppBar(title: const Text('Selecciona la ubicación')),
-      body: Column(
+    return ShadcnPage(
+      title: 'Selecciona la ubicación',
+      padding: EdgeInsets.zero,
+      child: Column(
         children: [
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(24),
                 child: GoogleMap(
                   initialCameraPosition: widget.initialCameraPosition,
                   minMaxZoomPreference: const MinMaxZoomPreference(0, 21),
@@ -81,14 +84,11 @@ class _CitizenMapScreenState extends State<CitizenMapScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: ElevatedButton.icon(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+            child: ShadcnButton(
+              label: 'Confirmar ubicación',
+              icon: Icons.check_circle_outline,
               onPressed: _handleConfirmLocation,
-              icon: const Icon(Icons.check_circle_outline),
-              label: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Confirmar ubicación'),
-              ),
             ),
           ),
         ],

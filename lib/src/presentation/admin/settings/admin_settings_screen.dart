@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../design/shadcn/components/shadcn_button.dart';
+import '../../design/shadcn/components/shadcn_card.dart';
+
 class AdminSettingsScreen extends StatefulWidget {
   const AdminSettingsScreen({super.key});
 
@@ -38,38 +41,46 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 16),
-          SwitchListTile.adaptive(
-            value: _notificationsEnabled,
-            onChanged: (value) {
-              //1.- Alternamos la recepción de notificaciones críticas para el panel.
-              setState(() => _notificationsEnabled = value);
-            },
-            title: const Text('Notificaciones críticas'),
-            subtitle: const Text(
-              'Recibe alertas en tiempo real cuando se detecten incidencias críticas.',
+          ShadcnCard(
+            child: Column(
+              children: [
+                SwitchListTile.adaptive(
+                  value: _notificationsEnabled,
+                  onChanged: (value) {
+                    //1.- Alternamos la recepción de notificaciones críticas para el panel.
+                    setState(() => _notificationsEnabled = value);
+                  },
+                  title: const Text('Notificaciones críticas'),
+                  subtitle: const Text(
+                    'Recibe alertas en tiempo real cuando se detecten incidencias críticas.',
+                  ),
+                ),
+                const Divider(),
+                SwitchListTile.adaptive(
+                  value: _autoAssignIncidents,
+                  onChanged: (value) {
+                    //1.- Controlamos si el sistema asigna automáticamente reportes a agentes.
+                    setState(() => _autoAssignIncidents = value);
+                  },
+                  title: const Text('Asignación automática'),
+                  subtitle: const Text(
+                    'Distribuye incidentes entrantes entre los equipos disponibles.',
+                  ),
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.schedule),
+                  title: const Text('Hora del resumen diario'),
+                  subtitle: Text('Programado a las ${_digestTime.format(context)}'),
+                  onTap: () => _selectDigestTime(context),
+                ),
+              ],
             ),
-          ),
-          const Divider(),
-          SwitchListTile.adaptive(
-            value: _autoAssignIncidents,
-            onChanged: (value) {
-              //1.- Controlamos si el sistema asigna automáticamente reportes a agentes.
-              setState(() => _autoAssignIncidents = value);
-            },
-            title: const Text('Asignación automática'),
-            subtitle: const Text(
-              'Distribuye incidentes entrantes entre los equipos disponibles.',
-            ),
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.schedule),
-            title: const Text('Hora del resumen diario'),
-            subtitle: Text('Programado a las ${_digestTime.format(context)}'),
-            onTap: () => _selectDigestTime(context),
           ),
           const SizedBox(height: 32),
-          FilledButton.icon(
+          ShadcnButton(
+            label: 'Guardar cambios',
+            icon: Icons.save,
             onPressed: () {
               //1.- Simulamos un guardado local para mostrar retroalimentación inmediata.
               ScaffoldMessenger.of(context).showSnackBar(
@@ -78,8 +89,6 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                 ),
               );
             },
-            icon: const Icon(Icons.save),
-            label: const Text('Guardar cambios'),
           ),
         ],
       ),

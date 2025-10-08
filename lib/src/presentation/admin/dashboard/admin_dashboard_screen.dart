@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../widgets/primary_button.dart';
+import '../../design/shadcn/components/shadcn_button.dart';
+import '../../design/shadcn/components/shadcn_card.dart';
 import '../state/admin_navigation_controller.dart';
 import '../state/admin_reports_providers.dart';
 
@@ -48,16 +49,12 @@ class AdminDashboardScreen extends ConsumerWidget {
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, stackTrace) {
               //1.- Mostramos retroalimentación en caso de que la consulta falle.
-              return Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(16),
-                ),
+              return ShadcnCard(
                 child: Row(
                   children: [
-                    const Icon(Icons.error_outline),
-                    const SizedBox(width: 8),
+                    Icon(Icons.error_outline,
+                        color: Theme.of(context).colorScheme.error),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Text('No se pudieron cargar las métricas: $error'),
                     ),
@@ -72,7 +69,7 @@ class AdminDashboardScreen extends ConsumerWidget {
             },
           ),
           const SizedBox(height: 32),
-          PrimaryButton(
+          ShadcnButton(
             label: 'Ver listado completo',
             onPressed: () {
               //1.- Navegamos al listado de reportes usando el controlador global.
@@ -94,20 +91,17 @@ class _DashboardCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     //1.- Representamos una tarjeta con estadísticas principales del panel.
-    return Container(
-      width: 200,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.labelLarge),
-          const SizedBox(height: 8),
-          Text(value, style: Theme.of(context).textTheme.headlineMedium),
-        ],
+    return SizedBox(
+      width: 220,
+      child: ShadcnCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: 8),
+            Text(value, style: Theme.of(context).textTheme.headlineMedium),
+          ],
+        ),
       ),
     );
   }
