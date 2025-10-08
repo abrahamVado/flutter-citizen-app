@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"citizenapp/backend/internal/httpgin/dto"
+	"citizenapp/backend/internal/observability"
 	"citizenapp/backend/internal/realtime"
 	"citizenapp/backend/internal/service"
 	"github.com/gin-gonic/gin"
@@ -32,7 +33,7 @@ func New(auth *service.AuthService, catalog *service.CatalogService, reports *se
 		gin.SetMode(gin.ReleaseMode)
 	}
 	engine := gin.New()
-	engine.Use(gin.Logger(), gin.Recovery())
+	engine.Use(observability.GinMetricsMiddleware(), gin.Logger(), gin.Recovery())
 	engine.NoRoute(func(c *gin.Context) {
 		writeError(c, http.StatusNotFound, "not found")
 	})
@@ -48,6 +49,7 @@ func New(auth *service.AuthService, catalog *service.CatalogService, reports *se
 		},
 		engine: engine,
 	}
+	engine.GET("/metrics", gin.WrapH(observability.PrometheusHandler()))
 	srv.registerRoutes()
 	return srv
 }

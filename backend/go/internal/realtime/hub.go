@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"citizenapp/backend/internal/observability"
 	"citizenapp/backend/internal/service"
 	"github.com/gorilla/websocket"
 )
@@ -76,6 +77,7 @@ func NewHub(shardPower, workerCount, queueSize, clientBuffer int) *Hub {
 	for i := range shards {
 		shards[i].clients = make(map[uint64]*Client)
 	}
+	observability.EnsureMetrics(nil)
 	h := &Hub{
 		shards:            shards,
 		shardMask:         uint64(shardCount - 1),
@@ -168,6 +170,7 @@ func (h *Hub) shardFor(id uint64) *clientShard {
 func (h *Hub) broadcastWorker() {
 	defer h.workerGroup.Done()
 	for message := range h.broadcastQueue {
+		start := time.Now()
 		for i := range h.shards {
 			shard := &h.shards[i]
 			shard.mu.RLock()
@@ -176,6 +179,7 @@ func (h *Hub) broadcastWorker() {
 			}
 			shard.mu.RUnlock()
 		}
+		observability.ObserveBroadcastLatency(time.Since(start))
 	}
 }
 

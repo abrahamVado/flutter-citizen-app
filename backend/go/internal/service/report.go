@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"citizenapp/backend/internal/observability"
+	"github.com/rs/zerolog"
 )
 
 // 1.- Report representa la respuesta serializada para los reportes.
@@ -85,6 +88,8 @@ type ReportService struct {
 	repo       ReportRepository
 	rand       *rand.Rand
 	randMutex  sync.Mutex
+	// 6.1.- logger documenta los eventos para auditoría estructurada.
+	logger zerolog.Logger
 }
 
 // 7.- Errores compartidos para mapear estados HTTP coherentes.
@@ -105,12 +110,16 @@ func NewReportService(repo ReportRepository, submitWorkers, lookupWorkers int) *
 	if repo == nil {
 		panic("report repository is required")
 	}
+	observability.EnsureMetrics(nil)
 	s := &ReportService{
-		submitJobs: make(chan submitJob),
-		lookupJobs: make(chan lookupJob),
+		submitJobs: make(chan submitJob, max(32, submitWorkers*16)),
+		lookupJobs: make(chan lookupJob, max(32, lookupWorkers*16)),
 		repo:       repo,
 		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
+		logger:     observability.NamedLogger("report_service"),
 	}
+	observability.SetReportSubmitQueueDepth(len(s.submitJobs))
+	observability.SetReportLookupQueueDepth(len(s.lookupJobs))
 	for i := 0; i < submitWorkers; i++ {
 		go s.submitWorker()
 	}
@@ -128,6 +137,7 @@ func (s *ReportService) Submit(ctx context.Context, payload map[string]any) (Rep
 	case <-ctx.Done():
 		return Report{}, ctx.Err()
 	case s.submitJobs <- job:
+		observability.SetReportSubmitQueueDepth(len(s.submitJobs))
 	}
 	select {
 	case <-ctx.Done():
@@ -148,6 +158,7 @@ func (s *ReportService) Lookup(ctx context.Context, folio string) (FolioStatus, 
 	case <-ctx.Done():
 		return FolioStatus{}, ctx.Err()
 	case s.lookupJobs <- job:
+		observability.SetReportLookupQueueDepth(len(s.lookupJobs))
 	}
 	select {
 	case <-ctx.Done():
@@ -206,10 +217,21 @@ func (s *ReportService) UpdateStatus(ctx context.Context, id, status string) (Re
 	if _, ok := allowedStatuses[trimmed]; !ok {
 		return Report{}, ErrInvalidStatus
 	}
-	report, _, err := s.repo.UpdateStatusWithMetrics(ctx, id, trimmed)
+	previous, err := s.repo.FindByID(ctx, id)
 	if err != nil {
 		return Report{}, err
 	}
+	report, _, err := s.repo.UpdateStatusWithMetrics(ctx, id, trimmed)
+	if err != nil {
+		s.logger.Error().Err(err).Str("event", "report.status.update.failed").Str("report_id", id).Msg("unable to update report status")
+		return Report{}, err
+	}
+	s.logger.Info().
+		Str("event", "report.status.updated").
+		Str("report_id", report.ID).
+		Str("from_status", previous.Status).
+		Str("to_status", report.Status).
+		Msg("status transition recorded")
 	return report, nil
 }
 
@@ -235,6 +257,7 @@ func (s *ReportService) DashboardMetrics(ctx context.Context) (AdminDashboardMet
 
 func (s *ReportService) submitWorker() {
 	for job := range s.submitJobs {
+		observability.SetReportSubmitQueueDepth(len(s.submitJobs))
 		select {
 		case <-job.ctx.Done():
 			continue
@@ -265,15 +288,24 @@ func (s *ReportService) submitWorker() {
 		}
 		stored, err := s.repo.Create(job.ctx, report)
 		if err != nil {
+			s.logger.Error().Err(err).Str("event", "report.submit.failed").Str("report_id", report.ID).Msg("unable to persist report")
 			job.resultCh <- submitResult{err: err}
 			continue
 		}
+		s.logger.Info().
+			Str("event", "report.submit.completed").
+			Str("report_id", stored.ID).
+			Str("incident_type_id", stored.IncidentType.ID).
+			Float64("latitude", stored.Latitude).
+			Float64("longitude", stored.Longitude).
+			Msg("report stored successfully")
 		job.resultCh <- submitResult{report: stored}
 	}
 }
 
 func (s *ReportService) lookupWorker() {
 	for job := range s.lookupJobs {
+		observability.SetReportLookupQueueDepth(len(s.lookupJobs))
 		select {
 		case <-job.ctx.Done():
 			continue
@@ -288,7 +320,15 @@ func (s *ReportService) lookupWorker() {
 	}
 }
 
-// 16.- toFloat homogeniza los datos numéricos recibidos.
+// 16.- max retorna el valor más grande entre dos enteros.
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// 17.- toFloat homogeniza los datos numéricos recibidos.
 func toFloat(value any) (float64, bool) {
 	switch v := value.(type) {
 	case float64:
