@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -327,7 +328,46 @@ func TestReportSubmissionValidationRejectsMalformedPayload(t *testing.T) {
 	}
 }
 
-// 22.- performJSON ayuda a serializar cuerpos y decodificar respuestas.
+func TestMetricsEndpointReportsObservability(t *testing.T) {
+	// 22.- El endpoint /metrics debe exponer las métricas clave instrumentadas.
+	srv := buildServer(t)
+	creds := map[string]string{
+		"email":    "metrics@example.com",
+		"password": "ClaveSegura1",
+	}
+	performJSON(t, srv, http.MethodPost, "/api/v1/auth/register", creds, http.StatusCreated, nil)
+	var login service.AuthResponse
+	performJSON(t, srv, http.MethodPost, "/api/v1/auth/login", creds, http.StatusOK, &login)
+	submission := map[string]any{
+		"incidentTypeId": "flood",
+		"description":    "Avenida inundada",
+		"contactEmail":   creds["email"],
+		"contactPhone":   "5587654321",
+		"latitude":       19.43,
+		"longitude":      -99.13,
+		"address":        "Centro",
+	}
+	performJSON(t, srv, http.MethodPost, "/api/v1/reports", submission, http.StatusCreated, nil, withAuth(login.Token))
+	time.Sleep(150 * time.Millisecond)
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 from metrics endpoint, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "citizenapp_report_submit_queue_depth") {
+		t.Fatalf("expected submit queue metric in body, got %s", body)
+	}
+	if !strings.Contains(body, "citizenapp_http_request_duration_seconds_bucket") {
+		t.Fatalf("expected http duration histogram in body, got %s", body)
+	}
+	if !strings.Contains(body, "citizenapp_realtime_broadcast_latency_seconds_bucket") {
+		t.Fatalf("expected broadcast latency histogram in body, got %s", body)
+	}
+}
+
+// 23.- performJSON ayuda a serializar cuerpos y decodificar respuestas.
 func performJSON(t *testing.T, srv *Server, method, path string, payload any, expected int, target any, opts ...func(*http.Request)) {
 	t.Helper()
 	body, err := json.Marshal(payload)
@@ -337,7 +377,7 @@ func performJSON(t *testing.T, srv *Server, method, path string, payload any, ex
 	performWithBody(t, srv, method, path, bytes.NewReader(body), expected, target, opts...)
 }
 
-// 23.- performRequest ejecuta solicitudes sin cuerpo auxiliar.
+// 24.- performRequest ejecuta solicitudes sin cuerpo auxiliar.
 func performRequest(t *testing.T, srv *Server, method, path string, body *bytes.Reader, expected int, target any, opts ...func(*http.Request)) {
 	t.Helper()
 	var reader *bytes.Reader
@@ -349,7 +389,7 @@ func performRequest(t *testing.T, srv *Server, method, path string, body *bytes.
 	performWithBody(t, srv, method, path, reader, expected, target, opts...)
 }
 
-// 24.- performWithBody centraliza la ejecución contra el engine Gin.
+// 25.- performWithBody centraliza la ejecución contra el engine Gin.
 func performWithBody(t *testing.T, srv *Server, method, path string, reader *bytes.Reader, expected int, target any, opts ...func(*http.Request)) {
 	t.Helper()
 	req := httptest.NewRequest(method, path, reader)
@@ -371,14 +411,14 @@ func performWithBody(t *testing.T, srv *Server, method, path string, reader *byt
 	}
 }
 
-// 25.- withAuth adjunta el encabezado Authorization requerido por las rutas.
+// 26.- withAuth adjunta el encabezado Authorization requerido por las rutas.
 func withAuth(token string) func(*http.Request) {
 	return func(r *http.Request) {
 		r.Header.Set("Authorization", "Bearer "+token)
 	}
 }
 
-// 26.- captureConn implementa la interfaz WebSocket mínima para pruebas.
+// 27.- captureConn implementa la interfaz WebSocket mínima para pruebas.
 type captureConn struct{}
 
 func (c *captureConn) SetReadLimit(int64)                        {}
