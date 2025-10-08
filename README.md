@@ -1,17 +1,16 @@
-# citizen_reports_flutter
+# Citizen Reports Flutter
 
-A new Flutter project.
+This repo hosts the Flutter client for the Citizen Reports initiative. Two entrypoints drive independent experiences:
 
-## Getting Started
+- `lib/main_citizen.dart` – the public citizen dashboard that exposes reporting and folio lookups without authentication.
+- `lib/main_admin.dart` – the administrative panel guarded by the Riverpod-powered session controller.
 
-This project is a starting point for a Flutter application.
+## Building Variants
 
-A few resources to get you started if this is your first Flutter project:
+Run `tool/ci/build_variants.sh` to produce Android and iOS binaries for both shells. The script wires the correct targets:
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+```bash
+./tool/ci/build_variants.sh
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-q
+Each command accepts additional Flutter arguments that are forwarded to `flutter build` for customization.

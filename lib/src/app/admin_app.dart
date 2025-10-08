@@ -3,20 +3,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../presentation/admin/admin_shell.dart';
 import '../presentation/design/shadcn/shadcn_theme.dart';
-import '../presentation/public/public_shell.dart';
-import 'providers.dart';
+import '../presentation/public/auth/auth_screen.dart';
 import 'state/session_controller.dart';
 
-class CitizenReportsApp extends ConsumerWidget {
-  const CitizenReportsApp({super.key});
+class AdminApp extends ConsumerWidget {
+  const AdminApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    //1.- Observamos el estado de sesión para decidir qué grafo de navegación mostrar.
+    //1.- Escuchamos la sesión global para decidir si debemos pedir credenciales o mostrar el panel administrativo.
     final session = ref.watch(sessionControllerProvider);
+    //2.- Reutilizamos el mismo tema visual para mantener consistencia entre las experiencias.
     final theme = ShadcnTheme.build();
+    //3.- Construimos un MaterialApp que intercambia su pantalla inicial según el estado de sesión observado.
     return MaterialApp(
-      title: 'Citizen Reports',
+      title: 'Citizen Reports Admin',
       theme: theme,
       home: AnimatedSwitcher(
         duration: const Duration(milliseconds: 250),
@@ -24,7 +25,7 @@ class CitizenReportsApp extends ConsumerWidget {
           SessionStatus.authenticated => const AdminShell(),
           SessionStatus.initializing => const _FullScreenLoader(),
           SessionStatus.error => _SessionError(error: session.errorMessage ?? 'Error de sesión'),
-          _ => const PublicShell(),
+          SessionStatus.signedOut => const AuthScreen(),
         },
       ),
     );
@@ -36,7 +37,7 @@ class _FullScreenLoader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    //1.- Mostramos un loader simple mientras se ejecutan procesos de autenticación.
+    //1.- Mostramos un indicador de carga de pantalla completa mientras se procesan las credenciales del usuario.
     return const Scaffold(
       body: Center(child: CircularProgressIndicator()),
     );
@@ -50,7 +51,7 @@ class _SessionError extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    //1.- Exponemos el error y permitimos reintentar un inicio de sesión limpio.
+    //1.- Renderizamos el mensaje de error y permitimos limpiar la sesión para reintentar el flujo.
     return Scaffold(
       body: Center(
         child: Padding(
