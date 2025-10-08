@@ -37,7 +37,7 @@ dependencies:
   flutter_riverpod: ^2.5.1
   dio: ^5.7.0
   equatable: ^2.0.5
-  google_maps_flutter: ^2.13.1
+  google_maps_flutter: ^2.7.0
 
 dev_dependencies:
   flutter_test:

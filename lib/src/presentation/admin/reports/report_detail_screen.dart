@@ -163,7 +163,7 @@ class _ReportDetailScreenState extends ConsumerState<ReportDetailScreen> {
                                     );
                                     ref
                                         .read(adminNavigationProvider.notifier)
-                                        .goToReportList();
+                                        .goToReports();
                                   } catch (error) {
                                     if (!mounted) return;
                                     ScaffoldMessenger.of(context).showSnackBar(
