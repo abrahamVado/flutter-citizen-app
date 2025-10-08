@@ -50,8 +50,8 @@ class SessionController extends StateNotifier<SessionState> {
     try {
       //2.- Ejecutamos el caso de uso de autenticación utilizando las credenciales entregadas.
       final token = await _authenticateUser(credentials);
-      //3.- Publicamos el token exitoso y marcamos la sesión como autenticada.
-      state = state.copyWith(status: SessionStatus.authenticated, token: token);
+      //3.- Publicamos el token exitoso reutilizando el método dedicado para transicionar la sesión.
+      markAuthenticated(token);
     } on Exception catch (error) {
       //4.- Ante cualquier error exponemos un mensaje legible y limpiamos el token previo.
       state = state.copyWith(
@@ -60,6 +60,15 @@ class SessionController extends StateNotifier<SessionState> {
         token: null,
       );
     }
+  }
+
+  void markAuthenticated(AuthToken token) {
+    //1.- Centralizamos la transición a sesión autenticada para reutilizarla desde otros flujos (registro/social).
+    state = state.copyWith(
+      status: SessionStatus.authenticated,
+      token: token,
+      errorMessage: null,
+    );
   }
 
   void signOut() {

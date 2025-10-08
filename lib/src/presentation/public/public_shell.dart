@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'auth/auth_screen.dart';
 import 'folio_lookup_screen.dart';
 import 'home/citizen_home_screen.dart';
 import 'map/citizen_map_screen.dart';
@@ -21,6 +22,8 @@ class _PublicShellState extends State<PublicShell> {
         return MaterialPageRoute(builder: (_) => const CitizenMapScreen());
       case '/folio':
         return MaterialPageRoute(builder: (_) => const FolioLookupScreen());
+      case '/auth':
+        return MaterialPageRoute(builder: (_) => const AuthScreen());
       default:
         return MaterialPageRoute(builder: (_) => const CitizenHomeScreen());
     }
