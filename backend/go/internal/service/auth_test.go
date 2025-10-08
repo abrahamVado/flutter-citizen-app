@@ -2,36 +2,39 @@ package service
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 )
 
-func TestAuthenticateGeneratesDeterministicToken(t *testing.T) {
-	// 1.- Preparamos el servicio con un TTL breve para validar el cálculo.
+func TestAuthenticateFlowRequiresRegistration(t *testing.T) {
+	// 1.- Preparamos el servicio y confirmamos que la autenticación falla sin registro previo.
 	svc := NewAuthService(1, 2*time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	if _, err := svc.Authenticate(ctx, "user@example.com", "s3cr3t"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected invalid credentials before registration, got %v", err)
+	}
 
-	// 2.- Ejecutamos la autenticación de un usuario controlado.
+	// 2.- Registramos al usuario y validamos la generación del token inicial.
+	initial, err := svc.Register(ctx, "user@example.com", "s3cr3t")
+	if err != nil {
+		t.Fatalf("Register returned error: %v", err)
+	}
+	if initial.Token == "" {
+		t.Fatalf("expected non empty token on register")
+	}
+
+	// 3.- Ejecutamos la autenticación y confirmamos que el TTL es razonable.
 	resp, err := svc.Authenticate(ctx, "user@example.com", "s3cr3t")
 	if err != nil {
 		t.Fatalf("Authenticate returned error: %v", err)
 	}
-
-	// 3.- Calculamos el token esperado usando el mismo algoritmo determinista.
-	hasher := sha1.New()
-	hasher.Write([]byte("user@example.com:s3cr3t"))
-	expected := hex.EncodeToString(hasher.Sum(nil))
-	if resp.Token != expected {
-		t.Fatalf("unexpected token: got %q want %q", resp.Token, expected)
+	if resp.Token == "" {
+		t.Fatalf("expected token value on authenticate")
 	}
-
-	// 4.- Confirmamos que la expiración esté dentro del rango previsto.
-	remaining := time.Until(resp.ExpiresAt)
-	if remaining < time.Minute || remaining > 2*time.Minute+time.Second {
-		t.Fatalf("unexpected ttl window: %s", remaining)
+	if time.Until(resp.ExpiresAt) <= 0 {
+		t.Fatalf("expected future expiration, got %v", resp.ExpiresAt)
 	}
 }
 

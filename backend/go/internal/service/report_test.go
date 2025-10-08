@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -51,11 +52,7 @@ func TestLookupReturnsNotFoundForUnknownFolio(t *testing.T) {
 	defer cancel()
 
 	// 2.- Ejecutamos la búsqueda con un identificador falso.
-	status, err := svc.Lookup(ctx, "F-00000")
-	if err != nil {
-		t.Fatalf("Lookup returned error: %v", err)
-	}
-	if status.Status != "no_encontrado" {
-		t.Fatalf("expected not found status, got %s", status.Status)
+	if _, err := svc.Lookup(ctx, "F-00000"); !errors.Is(err, ErrReportNotFound) {
+		t.Fatalf("expected ErrReportNotFound, got %v", err)
 	}
 }
