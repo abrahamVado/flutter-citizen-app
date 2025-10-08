@@ -30,6 +30,24 @@ The server listens on `http://127.0.0.1:8080` by default. Configure an alternate
 | `/reports` | `POST` | Accepts a report payload and generates a folio. |
 | `/folios/{id}` | `GET` | Returns the latest status and history for an existing folio. |
 
+## Request validation constraints
+The Gin handlers enforce the same limits expected by the mobile client before delegating to services.
+
+| Endpoint | Field | Rules |
+| --- | --- | --- |
+| `POST /api/v1/auth/login` / `POST /api/v1/auth/register` | `email` | Required, valid email format. |
+|  | `password` | Required, minimum 8 characters. |
+| `POST /api/v1/auth/recover` | `email` | Required, valid email format. |
+| `POST /api/v1/reports` | `incidentTypeId` | Required, non-empty string. |
+|  | `description` | Required, max 2000 characters. |
+|  | `contactEmail` | Required, valid email format. |
+|  | `contactPhone` | Required, 10–15 digits with optional leading `+`. |
+|  | `latitude` | Required, numeric range -90 to 90. |
+|  | `longitude` | Required, numeric range -180 to 180. |
+|  | `address` | Required, 1–250 characters. |
+|  | `evidenceUrls` | Optional, each entry must be a valid URL. |
+| `PATCH /api/v1/reports/{id}` | `status` | Required, allowed values: `en_revision`, `en_proceso`, `resuelto`, `critico`. |
+
 ## Flutter configuration
 Update the Flutter environment variables to point to the local Go service when testing:
 
