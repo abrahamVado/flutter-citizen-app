@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:label="Citizen Reports"
+        tools:replace="android:label">
+        <meta-data
+            android:name="flutterTarget"
+            android:value="lib/main_citizen.dart" />
+    </application>
+</manifest>
