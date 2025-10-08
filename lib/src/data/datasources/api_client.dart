@@ -9,6 +9,7 @@ import '../../domain/entities/incident_type.dart';
 import '../../domain/entities/paginated_reports.dart';
 import '../../domain/entities/report.dart';
 import '../../domain/value_objects/auth_token.dart';
+import '../../domain/value_objects/social_provider.dart';
 // Removed: '../../utils/network/network_executor.dart'
 import '../models/mappers.dart';
 
@@ -46,6 +47,35 @@ class ApiClient {
     await Future<void>.delayed(const Duration(milliseconds: 200));
     return AuthToken(
       'token-${email.hashCode}-${password.hashCode}',
+      expiresAt: DateTime.now().add(const Duration(hours: 8)),
+    );
+  }
+
+  Future<AuthToken> register({
+    required String email,
+    required String password,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 240));
+    return AuthToken(
+      'reg-${email.hashCode}-${password.hashCode}',
+      expiresAt: DateTime.now().add(const Duration(hours: 8)),
+    );
+  }
+
+  Future<void> recoverPassword({required String email}) async {
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    if (!email.contains('@')) {
+      throw DioException(
+        requestOptions: RequestOptions(path: '/recover'),
+        message: 'Correo inválido',
+      );
+    }
+  }
+
+  Future<AuthToken> signInWithProvider({required SocialProvider provider}) async {
+    await Future<void>.delayed(const Duration(milliseconds: 210));
+    return AuthToken(
+      'social-${provider.id}-${_random.nextInt(999999)}',
       expiresAt: DateTime.now().add(const Duration(hours: 8)),
     );
   }

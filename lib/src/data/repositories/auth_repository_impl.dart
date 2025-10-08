@@ -1,6 +1,7 @@
 import '../../domain/entities/auth_credentials.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../../domain/value_objects/auth_token.dart';
+import '../../domain/value_objects/social_provider.dart';
 import '../cache/local_cache.dart';
 import '../datasources/api_client.dart';
 import '../../utils/cache/cache_box.dart';
@@ -47,6 +48,35 @@ class AuthRepositoryImpl implements AuthRepository {
     //2.- Guardamos el token serializado utilizando el `CacheBox` tipado.
     await _tokenBox.write(token);
     //3.- Devolvemos el token a la capa de dominio.
+    return token;
+  }
+
+  @override
+  Future<AuthToken> register(AuthCredentials credentials) async {
+    //1.- Ejecutamos el registro remoto solicitando que el backend cree la cuenta y retorne un token.
+    final token = await _apiClient.register(
+      email: credentials.email,
+      password: credentials.password,
+    );
+    //2.- Persistimos el token recién emitido para mantener la sesión del nuevo usuario.
+    await _tokenBox.write(token);
+    //3.- Entregamos el token a la aplicación para redirigir al área administrativa.
+    return token;
+  }
+
+  @override
+  Future<void> recoverPassword(String email) {
+    //1.- Delegamos al cliente HTTP el envío del correo de restablecimiento.
+    return _apiClient.recoverPassword(email: email);
+  }
+
+  @override
+  Future<AuthToken> signInWithProvider(SocialProvider provider) async {
+    //1.- Solicitamos al backend validar el token social y emitir uno propio de la plataforma.
+    final token = await _apiClient.signInWithProvider(provider: provider);
+    //2.- Persistimos el token para reutilizarlo en la siguiente sesión.
+    await _tokenBox.write(token);
+    //3.- Devolvemos el token autenticado a la capa de presentación.
     return token;
   }
 

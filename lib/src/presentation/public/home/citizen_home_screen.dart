@@ -34,20 +34,8 @@ class CitizenHomeScreen extends StatelessWidget {
             const Spacer(),
             TextButton(
               onPressed: () {
-                //1.- Mostraríamos el formulario de login dentro de un bottom sheet.
-                showDialog<void>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Acceso administrativo'),
-                    content: const Text('Integra aquí el formulario de autenticación.'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('Cerrar'),
-                      ),
-                    ],
-                  ),
-                );
+                //1.- Navegamos a la nueva pantalla de autenticación administrada por Riverpod.
+                Navigator.of(context).pushNamed('/auth');
               },
               child: const Text('Ingresar como administrador'),
             ),
