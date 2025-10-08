@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"citizenapp/backend/internal/httpgin/dto"
 	"citizenapp/backend/internal/realtime"
 	"citizenapp/backend/internal/service"
 	"github.com/gin-gonic/gin"
@@ -141,12 +142,8 @@ func (s *Server) requireAuth() gin.HandlerFunc {
 func (s *Server) handleAuthLogin(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.Email == "" || body.Password == "" {
-		writeError(c, http.StatusBadRequest, "invalid payload")
+	var body dto.AuthCredentials
+	if ok := decodeAndValidate(c, &body); !ok {
 		return
 	}
 	resp, err := s.authService.Authenticate(ctx, body.Email, body.Password)
@@ -165,12 +162,8 @@ func (s *Server) handleAuthLogin(c *gin.Context) {
 func (s *Server) handleAuthRegister(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid payload")
+	var body dto.AuthCredentials
+	if ok := decodeAndValidate(c, &body); !ok {
 		return
 	}
 	resp, err := s.authService.Register(ctx, body.Email, body.Password)
@@ -192,11 +185,8 @@ func (s *Server) handleAuthRegister(c *gin.Context) {
 func (s *Server) handleAuthRecover(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
-	var body struct {
-		Email string `json:"email"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.Email == "" {
-		writeError(c, http.StatusBadRequest, "invalid payload")
+	var body dto.RecoverRequest
+	if ok := decodeAndValidate(c, &body); !ok {
 		return
 	}
 	if err := s.authService.Recover(ctx, body.Email); err != nil {
@@ -262,12 +252,11 @@ func (s *Server) handleReportList(c *gin.Context) {
 func (s *Server) handleReportSubmit(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	var payload map[string]any
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid payload")
+	var payload dto.ReportSubmissionRequest
+	if ok := decodeAndValidate(c, &payload); !ok {
 		return
 	}
-	report, err := s.reportService.Submit(ctx, payload)
+	report, err := s.reportService.Submit(ctx, payload.ToPayload())
 	if err != nil {
 		writeError(c, http.StatusGatewayTimeout, err.Error())
 		return
@@ -298,11 +287,8 @@ func (s *Server) handleReportUpdate(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
 	id := c.Param("id")
-	var body struct {
-		Status string `json:"status"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Status) == "" {
-		writeError(c, http.StatusBadRequest, "invalid payload")
+	var body dto.ReportStatusUpdateRequest
+	if ok := decodeAndValidate(c, &body); !ok {
 		return
 	}
 	report, err := s.reportService.UpdateStatus(ctx, id, body.Status)
