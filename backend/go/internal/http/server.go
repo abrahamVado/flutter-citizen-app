@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
-
-	"github.com/go-chi/chi/v5"
 
 	"citizenapp/backend/internal/service"
 )
@@ -29,12 +28,12 @@ func New(auth *service.AuthService, catalog *service.CatalogService, reports *se
 
 // 3.- Router expone el *chi.Mux con los handlers concurrentes.
 func (s *Server) Router() http.Handler {
-	r := chi.NewRouter()
-	r.Post("/auth", s.handleAuth)
-	r.Get("/catalog", s.handleCatalog)
-	r.Post("/reports", s.handleReportSubmit)
-	r.Get("/folios/{id}", s.handleFolioLookup)
-	return r
+	mux := http.NewServeMux()
+	mux.HandleFunc("/auth", withMethod(http.MethodPost, s.handleAuth))
+	mux.HandleFunc("/catalog", withMethod(http.MethodGet, s.handleCatalog))
+	mux.HandleFunc("/reports", withMethod(http.MethodPost, s.handleReportSubmit))
+	mux.HandleFunc("/folios/", withMethod(http.MethodGet, s.handleFolioLookup))
+	return mux
 }
 
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +90,11 @@ func (s *Server) handleFolioLookup(w http.ResponseWriter, r *http.Request) {
 	// 7.- Consultamos los folios mediante el pool especializado.
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	folioID := chi.URLParam(r, "id")
+	folioID := strings.TrimPrefix(r.URL.Path, "/folios/")
+	if folioID == "" {
+		http.Error(w, "missing folio id", http.StatusBadRequest)
+		return
+	}
 	status, err := s.reportService.Lookup(ctx, folioID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusGatewayTimeout)
@@ -105,4 +108,15 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// 9.- withMethod valida el método HTTP antes de delegar en el handler real.
+func withMethod(method string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		next(w, r)
+	}
 }
