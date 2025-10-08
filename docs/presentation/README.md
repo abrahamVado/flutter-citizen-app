@@ -24,9 +24,9 @@ The presentation layer renders UI for public citizens and administrators. It rel
 2. Results or errors are displayed in-line, allowing users to retry with cleaned state when needed.
 
 ### Session-Aware Navigation
-1. `CitizenReportsApp` swaps between `PublicShell` and `AdminShell` based on `SessionState`.
-2. Within `PublicShell`, a nested navigator drives map, folio, and home routes without affecting the admin stack.
-3. `AdminShell` offers a scaffold with sign-out actions and quick navigation to `AdminDashboardScreen` summaries.
+1. `CitizenApp` siempre renderiza `PublicShell`, manteniendo el flujo ciudadano desacoplado de la autenticación.
+2. `AdminApp` observa `SessionState` para alternar entre `AuthScreen`, loaders, errores y el `AdminShell` seguro.
+3. Dentro de `PublicShell`, un Navigator anidado conduce mapa, folio y home sin afectar el stack administrativo, mientras `AdminShell` ofrece cierre de sesión y accesos rápidos al `AdminDashboardScreen`.
 
 ## Super-Comment Map
 Refer to the following files to align documentation with code annotations:
