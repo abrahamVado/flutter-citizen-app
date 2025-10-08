@@ -87,7 +87,7 @@ void main() {
 
     expect(
       container.read(adminNavigationProvider).route,
-      AdminRoute.reportList,
+      AdminRoute.reports,
     );
   });
 }

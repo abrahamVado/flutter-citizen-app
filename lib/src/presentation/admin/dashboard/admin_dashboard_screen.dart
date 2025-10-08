@@ -76,7 +76,7 @@ class AdminDashboardScreen extends ConsumerWidget {
             label: 'Ver listado completo',
             onPressed: () {
               //1.- Navegamos al listado de reportes usando el controlador global.
-              navigator.goToReportList();
+              navigator.goToReports();
             },
           ),
         ],

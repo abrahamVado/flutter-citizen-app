@@ -1,6 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-enum AdminRoute { dashboard, reportList, reportDetail }
+enum AdminRoute {
+  dashboard,
+  reports,
+  reportDetail,
+  privateMap,
+  settings,
+  profile,
+}
 
 class AdminNavigationState {
   const AdminNavigationState({
@@ -30,9 +37,24 @@ class AdminNavigationController extends StateNotifier<AdminNavigationState> {
     state = const AdminNavigationState(route: AdminRoute.dashboard);
   }
 
-  void goToReportList() {
+  void goToReports() {
     //1.- Mostramos la tabla con el historial completo de reportes.
-    state = const AdminNavigationState(route: AdminRoute.reportList);
+    state = const AdminNavigationState(route: AdminRoute.reports);
+  }
+
+  void goToPrivateMap() {
+    //1.- Cargamos el mapa privado para visualizar la distribución geográfica.
+    state = const AdminNavigationState(route: AdminRoute.privateMap);
+  }
+
+  void goToSettings() {
+    //1.- Abrimos el módulo de configuración del panel administrativo.
+    state = const AdminNavigationState(route: AdminRoute.settings);
+  }
+
+  void goToProfile() {
+    //1.- Permitimos que la persona administradora revise y edite su perfil.
+    state = const AdminNavigationState(route: AdminRoute.profile);
   }
 
   void openReportDetail(String reportId) {
@@ -46,10 +68,16 @@ class AdminNavigationController extends StateNotifier<AdminNavigationState> {
   bool handlePop() {
     //1.- Interceptamos la navegación hacia atrás para movernos entre pantallas anidadas.
     if (state.route == AdminRoute.reportDetail) {
-      goToReportList();
+      goToReports();
       return true;
     }
-    if (state.route == AdminRoute.reportList) {
+    if (state.route == AdminRoute.reports) {
+      goToDashboard();
+      return true;
+    }
+    if (state.route == AdminRoute.privateMap ||
+        state.route == AdminRoute.settings ||
+        state.route == AdminRoute.profile) {
       goToDashboard();
       return true;
     }
