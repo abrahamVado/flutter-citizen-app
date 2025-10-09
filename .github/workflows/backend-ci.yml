@@ -1,0 +1,89 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - "backend/go/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "backend/go/**"
+      - ".github/workflows/backend-ci.yml"
+
+jobs:
+  test:
+    name: Go Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: //1.- Obtener el código del repositorio
+        uses: actions/checkout@v4
+      - name: //2.- Instalar Go para ejecutar las pruebas
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: //3.- Ejecutar la batería de pruebas del backend
+        run: |
+          cd backend/go
+          go test ./...
+
+  build-image:
+    name: Build Backend Image
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.name }}
+      tag: ${{ steps.meta.outputs.tag }}
+    env:
+      REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+      REGISTRY_REPOSITORY: ${{ secrets.REGISTRY_REPOSITORY }}
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+    steps:
+      - name: //4.- Obtener el código para la imagen
+        uses: actions/checkout@v4
+      - name: //5.- Definir nombre y etiqueta para la imagen
+        id: meta
+        run: |
+          if [ -n "$REGISTRY_HOST" ] && [ -n "$REGISTRY_REPOSITORY" ]; then
+            IMAGE_NAME="$REGISTRY_HOST/$REGISTRY_REPOSITORY"
+          else
+            IMAGE_NAME="citizenapp/backend"
+          fi
+          TAG="${GITHUB_SHA::7}"
+          echo "name=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: //6.- Compilar la imagen Docker multi-etapa
+        run: |
+          cd backend/go
+          docker build -t "${{ steps.meta.outputs.name }}:${{ steps.meta.outputs.tag }}" .
+      - name: //7.- Autenticar con el registro si hay credenciales
+        if: ${{ env.REGISTRY_HOST != '' && env.REGISTRY_USERNAME != '' && env.REGISTRY_PASSWORD != '' }}
+        run: |
+          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" -u "$REGISTRY_USERNAME" --password-stdin
+      - name: //8.- Publicar la imagen cuando se dispone del registro
+        if: ${{ env.REGISTRY_HOST != '' && env.REGISTRY_USERNAME != '' && env.REGISTRY_PASSWORD != '' }}
+        run: |
+          docker push "${{ steps.meta.outputs.name }}:${{ steps.meta.outputs.tag }}"
+
+  deploy:
+    name: Deploy Backend
+    needs: build-image
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [staging, production]
+    environment: ${{ matrix.environment }}
+    steps:
+      - name: //9.- Informar el artefacto a desplegar
+        run: |
+          echo "Deploying ${{ needs.build-image.outputs.image }}:${{ needs.build-image.outputs.tag }} to ${{ matrix.environment }}"
+      - name: //10.- Desplegar en staging si existe comando
+        if: ${{ matrix.environment == 'staging' && secrets.STAGING_DEPLOY_COMMAND != '' }}
+        env:
+          DEPLOY_COMMAND: ${{ secrets.STAGING_DEPLOY_COMMAND }}
+        run: bash -c "$DEPLOY_COMMAND"
+      - name: //11.- Desplegar en producción si existe comando
+        if: ${{ matrix.environment == 'production' && secrets.PRODUCTION_DEPLOY_COMMAND != '' }}
+        env:
+          DEPLOY_COMMAND: ${{ secrets.PRODUCTION_DEPLOY_COMMAND }}
+        run: bash -c "$DEPLOY_COMMAND"
