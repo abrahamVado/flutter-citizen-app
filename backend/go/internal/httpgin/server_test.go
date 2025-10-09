@@ -162,8 +162,8 @@ func (r *inMemoryReportRepository) metricsLocked() service.AdminDashboardMetrics
 	return metrics
 }
 
-// 3.- buildServer centraliza la creación del servidor de pruebas.
-func buildServer(t *testing.T) *Server {
+// 3.- buildServerWithConfig permite ajustar TLS, rate limiting y llaves para pruebas.
+func buildServerWithConfig(t *testing.T, cfg Config) *Server {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	authRepo := newInMemoryUserRepository()
@@ -171,15 +171,22 @@ func buildServer(t *testing.T) *Server {
 	authSvc := service.NewAuthService(authRepo, 2, time.Minute, []byte("integration-secret"))
 	catalogSvc := service.NewCatalogService(1)
 	reportSvc := service.NewReportService(reportRepo, 2, 2)
-	srv := New(authSvc, catalogSvc, reportSvc)
+	srv := New(authSvc, catalogSvc, reportSvc, cfg)
 	t.Cleanup(func() {
 		_ = srv.Shutdown(context.Background())
 	})
 	return srv
 }
 
+// 4.- buildServer crea un servidor con TLS deshabilitado para escenarios locales.
+func buildServer(t *testing.T) *Server {
+	cfg := DefaultConfig()
+	cfg.RequireTLS = false
+	return buildServerWithConfig(t, cfg)
+}
+
 func TestOpenAPIEndpointsHappyPath(t *testing.T) {
-	// 4.- Iniciamos el servidor y registramos un usuario nuevo.
+	// 5.- Iniciamos el servidor y registramos un usuario nuevo.
 	srv := buildServer(t)
 	registerBody := map[string]string{
 		"email":    "citizen@example.com",
@@ -187,7 +194,7 @@ func TestOpenAPIEndpointsHappyPath(t *testing.T) {
 	}
 	performJSON(t, srv, http.MethodPost, "/api/v1/auth/register", registerBody, http.StatusCreated, nil)
 
-	// 5.- Validamos el login tradicional.
+	// 6.- Validamos el login tradicional.
 	var loginResponse service.AuthResponse
 	performJSON(t, srv, http.MethodPost, "/api/v1/auth/login", registerBody, http.StatusOK, &loginResponse)
 	if loginResponse.Token == "" {
@@ -195,24 +202,24 @@ func TestOpenAPIEndpointsHappyPath(t *testing.T) {
 	}
 	authHeader := withAuth(loginResponse.Token)
 
-	// 6.- Recuperación de contraseña debe confirmar la cuenta.
+	// 7.- Recuperación de contraseña debe confirmar la cuenta.
 	recoverBody := map[string]string{"email": registerBody["email"]}
 	performJSON(t, srv, http.MethodPost, "/api/v1/auth/recover", recoverBody, http.StatusAccepted, nil)
 
-	// 7.- Autenticación social valida proveedores soportados.
+	// 8.- Autenticación social valida proveedores soportados.
 	performJSON(t, srv, http.MethodPost, "/api/v1/auth/social/google", map[string]string{}, http.StatusOK, nil)
 
-	// 8.- El catálogo debe responder con tipos disponibles.
+	// 9.- El catálogo debe responder con tipos disponibles.
 	var catalog []service.IncidentType
 	performRequest(t, srv, http.MethodGet, "/api/v1/catalog/incident-types", nil, http.StatusOK, &catalog)
 	if len(catalog) == 0 {
 		t.Fatalf("expected at least one incident type")
 	}
 
-	// 9.- Capturamos el hub para verificar el broadcast posterior.
+	// 10.- Capturamos el hub para verificar el broadcast posterior.
 	client := srv.realtimeHub.Register(&captureConn{})
 
-	// 10.- Ingresamos un reporte completo.
+	// 11.- Ingresamos un reporte completo.
 	reportBody := map[string]any{
 		"incidentTypeId": "pothole",
 		"description":    "Bache profundo",
@@ -228,7 +235,7 @@ func TestOpenAPIEndpointsHappyPath(t *testing.T) {
 		t.Fatalf("expected generated report identifier")
 	}
 
-	// 11.- Confirmamos la notificación WebSocket del nuevo reporte.
+	// 12.- Confirmamos la notificación WebSocket del nuevo reporte.
 	select {
 	case msg := <-client.Messages():
 		var payload map[string]any
@@ -242,63 +249,123 @@ func TestOpenAPIEndpointsHappyPath(t *testing.T) {
 		t.Fatalf("expected websocket broadcast after submission")
 	}
 
-	// 12.- Listamos los reportes administrativos.
+	// 13.- Listamos los reportes administrativos.
 	var list service.PaginatedReports
 	performRequest(t, srv, http.MethodGet, "/api/v1/reports?page=0&pageSize=10", nil, http.StatusOK, &list, authHeader)
 	if len(list.Items) == 0 {
 		t.Fatalf("expected paginated items in list endpoint")
 	}
 
-	// 13.- Leemos el reporte directo y comprobamos el ID.
+	// 14.- Leemos el reporte directo y comprobamos el ID.
 	var fetched service.Report
 	performRequest(t, srv, http.MethodGet, "/api/v1/reports/"+created.ID, nil, http.StatusOK, &fetched, authHeader)
 	if fetched.ID != created.ID {
 		t.Fatalf("expected fetched report ID %s, got %s", created.ID, fetched.ID)
 	}
 
-	// 14.- Actualizamos el estatus a resuelto.
+	// 15.- Actualizamos el estatus a resuelto.
 	updateBody := map[string]string{"status": "resuelto"}
 	performJSON(t, srv, http.MethodPatch, "/api/v1/reports/"+created.ID, updateBody, http.StatusOK, &fetched, authHeader)
 	if fetched.Status != "resuelto" {
 		t.Fatalf("expected updated status resuelto, got %s", fetched.Status)
 	}
 
-	// 15.- El dashboard debe reflejar el conteo de resueltos.
+	// 16.- El dashboard debe reflejar el conteo de resueltos.
 	var metrics service.AdminDashboardMetrics
 	performRequest(t, srv, http.MethodGet, "/api/v1/admin/dashboard/metrics", nil, http.StatusOK, &metrics, authHeader)
 	if metrics.ResolvedReports == 0 {
 		t.Fatalf("expected resolved reports metric to be positive")
 	}
 
-	// 16.- Consultamos el folio directo para validar seguimiento.
+	// 17.- Consultamos el folio directo para validar seguimiento.
 	var folio service.FolioStatus
 	performRequest(t, srv, http.MethodGet, "/api/v1/folios/"+created.ID, nil, http.StatusOK, &folio)
 	if folio.Folio != created.ID {
 		t.Fatalf("expected folio %s, got %s", created.ID, folio.Folio)
 	}
 
-	// 17.- Eliminamos el reporte y comprobamos la ausencia posterior.
+	// 18.- Eliminamos el reporte y comprobamos la ausencia posterior.
 	performRequest(t, srv, http.MethodDelete, "/api/v1/reports/"+created.ID, nil, http.StatusNoContent, nil, authHeader)
 	performRequest(t, srv, http.MethodGet, "/api/v1/reports/"+created.ID, nil, http.StatusNotFound, nil, authHeader)
 }
 
 func TestMethodEnforcementRemainsActive(t *testing.T) {
-	// 18.- Un GET sobre login debe seguir devolviendo 405.
+	// 19.- Un GET sobre login debe seguir devolviendo 405.
 	srv := buildServer(t)
 	performRequest(t, srv, http.MethodGet, "/api/v1/auth/login", nil, http.StatusMethodNotAllowed, nil)
 }
 
 func TestProtectedEndpointsRequireToken(t *testing.T) {
-	// 19.- Las rutas protegidas deben rechazar la ausencia de token.
+	// 20.- Las rutas protegidas deben rechazar la ausencia de token.
 	srv := buildServer(t)
 	performRequest(t, srv, http.MethodGet, "/api/v1/reports", nil, http.StatusUnauthorized, nil)
 
-	// 20.- Un token inválido también regresa 401.
+	// 21.- Un token inválido también regresa 401.
 	performRequest(t, srv, http.MethodGet, "/api/v1/reports", nil, http.StatusUnauthorized, nil, withAuth("malformed"))
 }
 
+func TestRateLimitingBlocksAggressiveClients(t *testing.T) {
+	// 22.- Definimos límites estrictos para autenticar y reportar.
+	cfg := DefaultConfig()
+	cfg.RequireTLS = false
+	cfg.RateLimits.AuthRequests = 2
+	cfg.RateLimits.AuthWindow = time.Minute
+	cfg.RateLimits.ReportRequests = 1
+	cfg.RateLimits.ReportWindow = time.Minute
+	srv := buildServerWithConfig(t, cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := srv.authService.Register(ctx, "limitado@example.com", "ClaveSegura1"); err != nil {
+		t.Fatalf("cannot register seed user: %v", err)
+	}
+
+	creds := map[string]string{
+		"email":    "limitado@example.com",
+		"password": "ClaveSegura1",
+	}
+	var session service.AuthResponse
+	performJSON(t, srv, http.MethodPost, "/api/v1/auth/login", creds, http.StatusOK, &session)
+	performJSON(t, srv, http.MethodPost, "/api/v1/auth/login", creds, http.StatusOK, nil)
+	performJSON(t, srv, http.MethodPost, "/api/v1/auth/login", creds, http.StatusTooManyRequests, nil)
+
+	payload := map[string]any{
+		"incidentTypeId": "noise",
+		"description":    "Fiesta nocturna",
+		"contactEmail":   creds["email"],
+		"contactPhone":   "5511122233",
+		"latitude":       19.33,
+		"longitude":      -99.14,
+		"address":        "Centro",
+	}
+	performJSON(t, srv, http.MethodPost, "/api/v1/reports", payload, http.StatusCreated, nil, withAuth(session.Token))
+	performJSON(t, srv, http.MethodPost, "/api/v1/reports", payload, http.StatusTooManyRequests, nil, withAuth(session.Token))
+}
+
+func TestAdminMetricsRequireApiKey(t *testing.T) {
+	// 23.- Configuramos la llave de administrador para proteger métricas sensibles.
+	cfg := DefaultConfig()
+	cfg.RequireTLS = false
+	cfg.MetricsAPIKey = "metrics-secret"
+	srv := buildServerWithConfig(t, cfg)
+
+	creds := map[string]string{
+		"email":    "metrics-guard@example.com",
+		"password": "ClaveSegura1",
+	}
+	performJSON(t, srv, http.MethodPost, "/api/v1/auth/register", creds, http.StatusCreated, nil)
+	var login service.AuthResponse
+	performJSON(t, srv, http.MethodPost, "/api/v1/auth/login", creds, http.StatusOK, &login)
+
+	// 24.- Sin la llave el acceso es rechazado.
+	performRequest(t, srv, http.MethodGet, "/api/v1/admin/dashboard/metrics", nil, http.StatusForbidden, nil, withAuth(login.Token))
+
+	// 25.- Con la llave correcta la métrica responde exitosamente.
+	performRequest(t, srv, http.MethodGet, "/api/v1/admin/dashboard/metrics", nil, http.StatusOK, nil, withAuth(login.Token), withAdminAPIKey(cfg.MetricsAPIKey))
+}
+
 func TestReportSubmissionValidationRejectsMalformedPayload(t *testing.T) {
-	// 21.- El validador debe prevenir que cargas incompletas lleguen al servicio.
+	// 26.- El validador debe prevenir que cargas incompletas lleguen al servicio.
 	srv := buildServer(t)
 	credentials := map[string]string{
 		"email":    "validator@example.com",
@@ -329,7 +396,7 @@ func TestReportSubmissionValidationRejectsMalformedPayload(t *testing.T) {
 }
 
 func TestMetricsEndpointReportsObservability(t *testing.T) {
-	// 22.- El endpoint /metrics debe exponer las métricas clave instrumentadas.
+	// 27.- El endpoint /metrics debe exponer las métricas clave instrumentadas.
 	srv := buildServer(t)
 	creds := map[string]string{
 		"email":    "metrics@example.com",
@@ -367,7 +434,7 @@ func TestMetricsEndpointReportsObservability(t *testing.T) {
 	}
 }
 
-// 23.- performJSON ayuda a serializar cuerpos y decodificar respuestas.
+// 28.- performJSON ayuda a serializar cuerpos y decodificar respuestas.
 func performJSON(t *testing.T, srv *Server, method, path string, payload any, expected int, target any, opts ...func(*http.Request)) {
 	t.Helper()
 	body, err := json.Marshal(payload)
@@ -377,7 +444,7 @@ func performJSON(t *testing.T, srv *Server, method, path string, payload any, ex
 	performWithBody(t, srv, method, path, bytes.NewReader(body), expected, target, opts...)
 }
 
-// 24.- performRequest ejecuta solicitudes sin cuerpo auxiliar.
+// 29.- performRequest ejecuta solicitudes sin cuerpo auxiliar.
 func performRequest(t *testing.T, srv *Server, method, path string, body *bytes.Reader, expected int, target any, opts ...func(*http.Request)) {
 	t.Helper()
 	var reader *bytes.Reader
@@ -389,7 +456,7 @@ func performRequest(t *testing.T, srv *Server, method, path string, body *bytes.
 	performWithBody(t, srv, method, path, reader, expected, target, opts...)
 }
 
-// 25.- performWithBody centraliza la ejecución contra el engine Gin.
+// 30.- performWithBody centraliza la ejecución contra el engine Gin.
 func performWithBody(t *testing.T, srv *Server, method, path string, reader *bytes.Reader, expected int, target any, opts ...func(*http.Request)) {
 	t.Helper()
 	req := httptest.NewRequest(method, path, reader)
@@ -411,14 +478,21 @@ func performWithBody(t *testing.T, srv *Server, method, path string, reader *byt
 	}
 }
 
-// 26.- withAuth adjunta el encabezado Authorization requerido por las rutas.
+// 31.- withAuth adjunta el encabezado Authorization requerido por las rutas.
 func withAuth(token string) func(*http.Request) {
 	return func(r *http.Request) {
 		r.Header.Set("Authorization", "Bearer "+token)
 	}
 }
 
-// 27.- captureConn implementa la interfaz WebSocket mínima para pruebas.
+// 32.- withAdminAPIKey agrega la cabecera X-Admin-Api-Key requerida en métricas.
+func withAdminAPIKey(key string) func(*http.Request) {
+	return func(r *http.Request) {
+		r.Header.Set("X-Admin-Api-Key", key)
+	}
+}
+
+// 33.- captureConn implementa la interfaz WebSocket mínima para pruebas.
 type captureConn struct{}
 
 func (c *captureConn) SetReadLimit(int64)                        {}

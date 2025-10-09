@@ -2,6 +2,7 @@ package httpgin
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,20 +18,65 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// 1.- Server agrupa los servicios, el motor Gin y el hub WebSocket.
+// 1.- Config agrupa TLS, límites de tasa y claves administrativas.
+type Config struct {
+	RequireTLS    bool
+	MetricsAPIKey string
+	RateLimits    RateLimitSettings
+}
+
+// 2.- RateLimitSettings define las cuotas máximas por tipo de endpoint.
+type RateLimitSettings struct {
+	AuthRequests   int
+	AuthWindow     time.Duration
+	ReportRequests int
+	ReportWindow   time.Duration
+}
+
+// 3.- DefaultConfig establece límites conservadores aptos para producción.
+func DefaultConfig() Config {
+	return Config{
+		RequireTLS: true,
+		RateLimits: RateLimitSettings{
+			AuthRequests:   5,
+			AuthWindow:     time.Minute,
+			ReportRequests: 30,
+			ReportWindow:   time.Minute,
+		},
+	}
+}
+
+// 4.- Server agrupa los servicios, el motor Gin, el hub y los limitadores.
 type Server struct {
 	authService    *service.AuthService
 	catalogService *service.CatalogService
 	reportService  *service.ReportService
 	realtimeHub    *realtime.Hub
+	authLimiter    *ipRateLimiter
+	reportLimiter  *ipRateLimiter
+	metricsAPIKey  string
+	requireTLS     bool
 	upgrader       websocket.Upgrader
 	engine         *gin.Engine
 }
 
-// 2.- New construye el servidor, configura Gin y prepara las rutas.
-func New(auth *service.AuthService, catalog *service.CatalogService, reports *service.ReportService) *Server {
+// 5.- New construye el servidor, configura Gin y prepara las rutas.
+func New(auth *service.AuthService, catalog *service.CatalogService, reports *service.ReportService, cfg Config) *Server {
 	if gin.Mode() == gin.DebugMode {
 		gin.SetMode(gin.ReleaseMode)
+	}
+	defaults := DefaultConfig()
+	if cfg.RateLimits.AuthRequests <= 0 {
+		cfg.RateLimits.AuthRequests = defaults.RateLimits.AuthRequests
+	}
+	if cfg.RateLimits.AuthWindow <= 0 {
+		cfg.RateLimits.AuthWindow = defaults.RateLimits.AuthWindow
+	}
+	if cfg.RateLimits.ReportRequests <= 0 {
+		cfg.RateLimits.ReportRequests = defaults.RateLimits.ReportRequests
+	}
+	if cfg.RateLimits.ReportWindow <= 0 {
+		cfg.RateLimits.ReportWindow = defaults.RateLimits.ReportWindow
 	}
 	engine := gin.New()
 	engine.Use(observability.GinMetricsMiddleware(), gin.Logger(), gin.Recovery())
@@ -43,41 +89,48 @@ func New(auth *service.AuthService, catalog *service.CatalogService, reports *se
 		catalogService: catalog,
 		reportService:  reports,
 		realtimeHub:    hub,
+		authLimiter:    newIPRateLimiter(cfg.RateLimits.AuthRequests, cfg.RateLimits.AuthWindow),
+		reportLimiter:  newIPRateLimiter(cfg.RateLimits.ReportRequests, cfg.RateLimits.ReportWindow),
+		metricsAPIKey:  strings.TrimSpace(cfg.MetricsAPIKey),
+		requireTLS:     cfg.RequireTLS,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 		},
 		engine: engine,
 	}
+	if srv.requireTLS {
+		engine.Use(srv.enforceTLS())
+	}
 	engine.GET("/metrics", gin.WrapH(observability.PrometheusHandler()))
 	srv.registerRoutes()
 	return srv
 }
 
-// 3.- Router expone el motor Gin para integrarse con net/http.
+// 6.- Router expone el motor Gin para integrarse con net/http.
 func (s *Server) Router() http.Handler {
 	return s.engine
 }
 
-// 4.- Engine devuelve el *gin.Engine interno para pruebas específicas.
+// 7.- Engine devuelve el *gin.Engine interno para pruebas específicas.
 func (s *Server) Engine() *gin.Engine {
 	return s.engine
 }
 
 func (s *Server) registerRoutes() {
-	// 5.- Agrupamos las rutas bajo /api/v1 para reflejar el contrato OpenAPI.
+	// 8.- Agrupamos las rutas bajo /api/v1 para reflejar el contrato OpenAPI.
 	api := s.engine.Group("/api/v1")
 	s.registerEndpoint(api, "/auth/login", map[string]gin.HandlerFunc{
-		http.MethodPost: s.handleAuthLogin,
+		http.MethodPost: s.wrapRateLimit(s.authLimiter, s.handleAuthLogin),
 	})
 	s.registerEndpoint(api, "/auth/register", map[string]gin.HandlerFunc{
-		http.MethodPost: s.handleAuthRegister,
+		http.MethodPost: s.wrapRateLimit(s.authLimiter, s.handleAuthRegister),
 	})
 	s.registerEndpoint(api, "/auth/recover", map[string]gin.HandlerFunc{
-		http.MethodPost: s.handleAuthRecover,
+		http.MethodPost: s.wrapRateLimit(s.authLimiter, s.handleAuthRecover),
 	})
 	s.registerEndpoint(api, "/auth/social/:provider", map[string]gin.HandlerFunc{
-		http.MethodPost: s.handleAuthSocial,
+		http.MethodPost: s.wrapRateLimit(s.authLimiter, s.handleAuthSocial),
 	})
 	s.registerEndpoint(api, "/catalog/incident-types", map[string]gin.HandlerFunc{
 		http.MethodGet: s.handleCatalog,
@@ -86,7 +139,7 @@ func (s *Server) registerRoutes() {
 	protected.Use(s.requireAuth())
 	s.registerEndpoint(protected, "/reports", map[string]gin.HandlerFunc{
 		http.MethodGet:  s.handleReportList,
-		http.MethodPost: s.handleReportSubmit,
+		http.MethodPost: s.wrapRateLimit(s.reportLimiter, s.handleReportSubmit),
 	})
 	s.registerEndpoint(protected, "/reports/:id", map[string]gin.HandlerFunc{
 		http.MethodGet:    s.handleReportGet,
@@ -96,8 +149,12 @@ func (s *Server) registerRoutes() {
 	s.registerEndpoint(api, "/folios/:folio", map[string]gin.HandlerFunc{
 		http.MethodGet: s.handleFolioLookup,
 	})
+	adminHandler := s.handleAdminMetrics
+	if s.metricsAPIKey != "" {
+		adminHandler = s.requireAdminAPIKey(adminHandler)
+	}
 	s.registerEndpoint(protected, "/admin/dashboard/metrics", map[string]gin.HandlerFunc{
-		http.MethodGet: s.handleAdminMetrics,
+		http.MethodGet: adminHandler,
 	})
 	s.engine.Handle(http.MethodGet, "/ws", func(c *gin.Context) {
 		if c.Request.Method != http.MethodGet {
@@ -108,7 +165,53 @@ func (s *Server) registerRoutes() {
 	})
 }
 
-// 6.- registerEndpoint controla métodos permitidos y devuelve 405 en caso contrario.
+// 9.- enforceTLS rechaza peticiones que no hayan pasado por un canal seguro.
+func (s *Server) enforceTLS() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.TLS != nil {
+			c.Next()
+			return
+		}
+		if proto := c.GetHeader("X-Forwarded-Proto"); strings.EqualFold(proto, "https") {
+			c.Next()
+			return
+		}
+		writeError(c, http.StatusUpgradeRequired, "https required")
+		c.Abort()
+	}
+}
+
+// 10.- wrapRateLimit aplica límites por IP y devuelve 429 ante abusos.
+func (s *Server) wrapRateLimit(limiter *ipRateLimiter, handler gin.HandlerFunc) gin.HandlerFunc {
+	if limiter == nil {
+		return handler
+	}
+	return func(c *gin.Context) {
+		key := strings.TrimSpace(c.ClientIP())
+		if key == "" {
+			key = strings.TrimSpace(c.Request.RemoteAddr)
+		}
+		if !limiter.Allow(key) {
+			writeError(c, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+		handler(c)
+	}
+}
+
+// 11.- requireAdminAPIKey valida un encabezado compartido para métricas internas.
+func (s *Server) requireAdminAPIKey(next gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		provided := strings.TrimSpace(c.GetHeader("X-Admin-Api-Key"))
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(s.metricsAPIKey)) != 1 {
+			writeError(c, http.StatusForbidden, "admin api key required")
+			return
+		}
+		next(c)
+	}
+}
+
+// 12.- registerEndpoint controla métodos permitidos y devuelve 405 en caso contrario.
 func (s *Server) registerEndpoint(group *gin.RouterGroup, path string, handlers map[string]gin.HandlerFunc) {
 	group.Any(path, func(c *gin.Context) {
 		if handler, ok := handlers[c.Request.Method]; ok {
@@ -119,7 +222,7 @@ func (s *Server) registerEndpoint(group *gin.RouterGroup, path string, handlers 
 	})
 }
 
-// 7.- requireAuth valida el encabezado Bearer y aborta si el token no es válido.
+// 13.- requireAuth valida el encabezado Bearer y aborta si el token no es válido.
 func (s *Server) requireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
@@ -140,7 +243,7 @@ func (s *Server) requireAuth() gin.HandlerFunc {
 	}
 }
 
-// 8.- handleAuthLogin verifica credenciales y responde con token JWT.
+// 14.- handleAuthLogin verifica credenciales y responde con token JWT.
 func (s *Server) handleAuthLogin(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -160,7 +263,7 @@ func (s *Server) handleAuthLogin(c *gin.Context) {
 	writeJSON(c, http.StatusOK, resp)
 }
 
-// 9.- handleAuthRegister crea un usuario y retorna el token inicial.
+// 15.- handleAuthRegister crea un usuario y retorna el token inicial.
 func (s *Server) handleAuthRegister(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -183,7 +286,7 @@ func (s *Server) handleAuthRegister(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, resp)
 }
 
-// 10.- handleAuthRecover confirma la existencia y simula el envío de correo.
+// 16.- handleAuthRecover confirma la existencia y simula el envío de correo.
 func (s *Server) handleAuthRecover(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
@@ -202,7 +305,7 @@ func (s *Server) handleAuthRecover(c *gin.Context) {
 	c.Status(http.StatusAccepted)
 }
 
-// 11.- handleAuthSocial valida el proveedor y responde con token federado.
+// 17.- handleAuthSocial valida el proveedor y responde con token federado.
 func (s *Server) handleAuthSocial(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -219,7 +322,7 @@ func (s *Server) handleAuthSocial(c *gin.Context) {
 	writeJSON(c, http.StatusOK, resp)
 }
 
-// 12.- handleCatalog delega al servicio para obtener los tipos de incidentes.
+// 18.- handleCatalog delega al servicio para obtener los tipos de incidentes.
 func (s *Server) handleCatalog(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
@@ -231,7 +334,7 @@ func (s *Server) handleCatalog(c *gin.Context) {
 	writeJSON(c, http.StatusOK, catalog)
 }
 
-// 13.- handleReportList atiende las solicitudes paginadas del panel.
+// 19.- handleReportList atiende las solicitudes paginadas del panel.
 func (s *Server) handleReportList(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -250,7 +353,7 @@ func (s *Server) handleReportList(c *gin.Context) {
 	writeJSON(c, http.StatusOK, reports)
 }
 
-// 14.- handleReportSubmit recibe el reporte ciudadano y notifica al hub.
+// 20.- handleReportSubmit recibe el reporte ciudadano y notifica al hub.
 func (s *Server) handleReportSubmit(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -267,7 +370,7 @@ func (s *Server) handleReportSubmit(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, report)
 }
 
-// 15.- handleReportGet devuelve el detalle puntual del reporte.
+// 21.- handleReportGet devuelve el detalle puntual del reporte.
 func (s *Server) handleReportGet(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -284,7 +387,7 @@ func (s *Server) handleReportGet(c *gin.Context) {
 	writeJSON(c, http.StatusOK, report)
 }
 
-// 16.- handleReportUpdate permite cambiar el estatus del reporte.
+// 22.- handleReportUpdate permite cambiar el estatus del reporte.
 func (s *Server) handleReportUpdate(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -308,7 +411,7 @@ func (s *Server) handleReportUpdate(c *gin.Context) {
 	writeJSON(c, http.StatusOK, report)
 }
 
-// 17.- handleReportDelete elimina definitivamente el registro.
+// 23.- handleReportDelete elimina definitivamente el registro.
 func (s *Server) handleReportDelete(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -324,7 +427,7 @@ func (s *Server) handleReportDelete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// 18.- handleFolioLookup reutiliza el servicio para mostrar el seguimiento.
+// 24.- handleFolioLookup reutiliza el servicio para mostrar el seguimiento.
 func (s *Server) handleFolioLookup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -345,7 +448,7 @@ func (s *Server) handleFolioLookup(c *gin.Context) {
 	writeJSON(c, http.StatusOK, status)
 }
 
-// 19.- handleAdminMetrics calcula los totales requeridos por el dashboard.
+// 25.- handleAdminMetrics calcula los totales requeridos por el dashboard.
 func (s *Server) handleAdminMetrics(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
@@ -357,7 +460,7 @@ func (s *Server) handleAdminMetrics(c *gin.Context) {
 	writeJSON(c, http.StatusOK, metrics)
 }
 
-// 20.- handleWebSocket conserva la actualización en tiempo real.
+// 26.- handleWebSocket conserva la actualización en tiempo real.
 func (s *Server) handleWebSocket(c *gin.Context) {
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -368,12 +471,12 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	go client.Run(context.Background())
 }
 
-// 21.- Shutdown sincroniza el cierre del hub con el servidor HTTP.
+// 27.- Shutdown sincroniza el cierre del hub con el servidor HTTP.
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.realtimeHub.Shutdown(ctx)
 }
 
-// 22.- writeJSON homologa la serialización JSON y cabeceras comunes.
+// 28.- writeJSON homologa la serialización JSON y cabeceras comunes.
 func writeJSON(c *gin.Context, status int, payload any) {
 	c.Header("Content-Type", "application/json")
 	c.Status(status)
@@ -382,7 +485,7 @@ func writeJSON(c *gin.Context, status int, payload any) {
 	_ = encoder.Encode(payload)
 }
 
-// 23.- writeError devuelve el esquema de ErrorResponse definido en OpenAPI.
+// 29.- writeError devuelve el esquema de ErrorResponse definido en OpenAPI.
 func writeError(c *gin.Context, status int, message string) {
 	type errorResponse struct {
 		Code    int    `json:"code"`
@@ -392,7 +495,7 @@ func writeError(c *gin.Context, status int, message string) {
 	c.AbortWithStatusJSON(status, payload)
 }
 
-// 24.- parseQueryInt estandariza la conversión de parámetros numéricos.
+// 30.- parseQueryInt estandariza la conversión de parámetros numéricos.
 func parseQueryInt(raw string, fallback int) int {
 	if strings.TrimSpace(raw) == "" {
 		return fallback
